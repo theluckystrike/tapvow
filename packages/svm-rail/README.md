@@ -51,7 +51,7 @@ These cases are not proof that no money moved.
 - A redirect after the payer signed.
 - An RPC error after the payer signed.
 
-The rail releases a hold only on proof. The proof is one of two facts. The transaction expired by blockhash and is not on chain, or the chain shows that it failed.
+Unknown signed payments stay charged in full. This implementation does not persist and prove the exact signed blockhash lifetime, so a wall-clock deadline never causes automatic release. A verified failed transaction may release the booking. An operator can also make an explicit audited override.
 
 Every settle path uses one atomic claim function. The live path and the reconcile path both claim the on chain signature in the same database transaction as the settle. A second claim loses and its hold is released.
 
@@ -63,19 +63,19 @@ Every settle path uses one atomic claim function. The live path and the reconcil
 | Approval timeout | No signature exists | Nothing, no hold | 403 |
 | Signed transaction mismatch | The fee payer has not signed, so the transfer cannot land | Hold released | 403 |
 | RPC timeout before signing | No signature exists | Nothing, no hold | 503 |
-| Facilitator error after signing | No settlement proof. The payer history scan may find a transfer, may finish with no match, may hit its cap or deadline, or may fail | A found transfer settles. Any other result books the full amount as unconfirmed with an expiry | 502 `mandate_unconfirmed` |
+| Facilitator error after signing | No settlement proof. The payer history scan may find a transfer, may finish with no match, may hit its cap or deadline, or may fail | A found transfer settles. Any other result books the full amount as unconfirmed; its deadline metadata is not proof of chain expiry | 502 `mandate_unconfirmed` |
 | Redirect after signing | Same as a facilitator error | Same as a facilitator error | 502 `mandate_unconfirmed` |
-| Transfer still pending at the finalized deadline | No final settlement proof | Full amount as unconfirmed with an expiry | 502 `mandate_unconfirmed` |
+| Transfer still pending at the finalized deadline | No final settlement proof | Full amount as unconfirmed; no automatic time-based release | 502 `mandate_unconfirmed` |
 | Transfer failed on chain | The transaction cannot move the money | Hold released | 402 |
 | Replayed signature within one mandate | Another booking already claimed the signature | Second hold released, first booking stays | 403 |
-| Expired booking, complete scan with no match | The authorization window and the blockhash lifetime passed, and no transfer exists | Hold released with reason `never_landed` | None, reconcile only |
+| Wall-clock deadline passed, with no match or a pending result | No proof that the signed blockhash is invalid | Booking stays charged in full until chain evidence or explicit operator release | None, reconcile only |
 | Expired booking, incomplete or unreadable scan | Nothing about the transfer | The booking stays charged full | None, reconcile only |
 
 A chain read that does not finish is never proof that no money moved. Reconcile keeps such a booking in place and reports an error.
 
 ## Reconcile
 
-`reconcileSvm` reads every `charged_full` Solana booking for the mandate. When the chain can read a genesis hash, the pass refuses a hash that does not match the candidate networks, before any write. It settles a matching finalized transfer, releases a failed one, releases a signature that another reservation already booked, releases an expired booking that never landed, and leaves pending, incomplete or unreadable bookings in place. The settle uses the same atomic signature claim as the live path, so a live settle and a reconcile pass cannot book one transfer twice. One throwing chain read reports an error for that booking only. The signed ledger is audited before any write.
+`reconcileSvm` reads every `charged_full` Solana booking for the mandate. When the chain can read a genesis hash, the pass refuses a hash that does not match the candidate networks, before any write. It settles a matching finalized transfer, releases a failed one, releases a signature that another reservation already booked, leaves bookings with only a passed wall-clock deadline in place, and leaves pending, incomplete or unreadable bookings in place. The settle uses the same atomic signature claim as the live path, so a live settle and a reconcile pass cannot book one transfer twice. One throwing chain read reports an error for that booking only. The signed ledger is audited before any write.
 
 ## Operator release
 
@@ -95,7 +95,7 @@ npm test --workspace @mandate/svm-rail
 npm run typecheck --workspace @mandate/svm-rail
 ```
 
-The tests use vitest. They run with a fake facilitator and a fake chain. The fake chain has a balance that moves only on a confirmed success, and it honours the search window. The suite covers success, blocked payee, cap hit, approval timeout, facilitator error, RPC timeout, replay on both settlement paths, a transfer outside the search window, a signed transaction mismatch, the mint and payee pins, and twenty reconcile cases. The reconcile cases include a never-landed release, an incomplete scan, an unreadable result at expiry, a live settle race, a swept booking, an operator release, and the audit trail.
+The tests use vitest. They run with a fake facilitator and a fake chain. The fake chain has a balance that moves only on a confirmed success, and it honours the search window. The suite covers success, blocked payee, cap hit, approval timeout, facilitator error, RPC timeout, replay on both settlement paths, a transfer outside the search window, a signed transaction mismatch, the mint and payee pins, and reconcile cases. The reconcile cases include delayed approval, a stalled cluster, empty scans after wall-clock deadlines, an incomplete scan, an unreadable result at expiry, a live settle race, a swept booking, an operator release, and the audit trail.
 
 The payee guard tests are separate.
 

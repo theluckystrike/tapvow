@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { TransactionSigner } from "@solana/kit";
@@ -29,6 +29,7 @@ import {
 
 const dirs: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   while (dirs.length > 0) {
     const dir = dirs.pop();
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -198,6 +199,43 @@ describe("SVM rail payment guard", () => {
     expect((booked[0]!.payload as any).details.unconfirmed).toBe(true);
     expect((booked[0]!.payload as any).details.unconfirmed_reason).toBe("facilitator_error");
     expect(typeof (booked[0]!.payload as any).details.expires_at_ms).toBe("number");
+  });
+
+  test("delayed approval cannot make a freshly signed unknown payment look expired", async () => {
+    const started = Date.now();
+    let clock = started;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const approver: Approver = {
+      async request() {
+        // Approval returns after the old bookingAt + 300s + 150s deadline.
+        // x402 creates the signed payment only after this hook returns.
+        clock = started + 600_000;
+        return { decision: "approved", requestId: "req_delayed_approval" };
+      },
+    };
+    const s = await setup({
+      amount: "2000000", mandate: { per_call_cap: "5.00", approval_threshold: "1.00" },
+      approver, facilitatorError: true,
+    });
+    const result = await s.call();
+    expect(result.status).toBe(502);
+    expect(reservationStatus(s.rail, 2_000_000)).toBe("charged_full");
+    const booked = s.rail.ledger.entries().find((entry) => entry.kind === "x402.settle" &&
+      (entry.payload as any).outcome === "charged_full");
+    expect((booked!.payload as any).details.expires_at_ms).toBeLessThan(clock);
+
+    const uncertain = await reconcileSvm(s.rail, s.chain);
+    expect(uncertain.results[0]?.result).toBe("pending");
+    expect(uncertain.releasedMicros).toBe(0);
+    expect(s.rail.store.spent(s.rail.mandate.id).committedMicros).toBe(2_000_000);
+
+    // The signature can still land after signing. Reconcile books it exactly
+    // once instead of silently forgetting a payment whose hold was released.
+    s.chain.record(s.settleSignature, s.facts());
+    const landed = await reconcileSvm(s.rail, s.chain);
+    expect(landed.results[0]?.result).toBe("settled");
+    expect(landed.confirmedMicros).toBe(2_000_000);
+    expect(s.rail.store.spent(s.rail.mandate.id).committedMicros).toBe(2_000_000);
   });
 
   test("a transfer that lands after a facilitator error settles the one unconfirmed booking", async () => {

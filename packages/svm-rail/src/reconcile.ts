@@ -29,7 +29,7 @@ export interface ReconcileOptions {
    * 15 minutes, wider than the Solana blockhash lifetime and clock skew.
    */
   searchMarginSeconds?: number;
-  /** Clock override, used by tests. */
+  /** Retained for callers; wall-clock time alone never releases an unknown payment. */
   now?: () => number;
   /**
    * The CAIP-2 networks this rail serves. Defaults to the networks named by the
@@ -156,7 +156,6 @@ export async function reconcileSvm(
   if (!Number.isSafeInteger(marginSeconds) || marginSeconds < 0) {
     throw new Error("searchMarginSeconds must be a non-negative safe integer");
   }
-  const now = opts.now ?? (() => Date.now());
 
   const snapshot = rail.store.readTransaction(() => {
     const audit = auditRail(rail.store, rail.ledger, rail.mandate.id, rail.trustedLedgerKeys);
@@ -221,23 +220,9 @@ export async function reconcileSvm(
         continue;
       }
       if (search.kind === "none") {
-        // A booking whose authorization window plus the blockhash lifetime has
-        // passed can never land. Release it instead of holding the budget for
-        // ever. Old bookings have no expiry, so they stay fail closed.
-        if (facts.expiresAtMs !== null && now() > facts.expiresAtMs) {
-          rail.store.reconcileCharged(candidate.reservationId, { outcome: "released" }, {
-            reason: "never_landed",
-            expires_at_ms: facts.expiresAtMs,
-            released_at_ms: now(),
-          });
-          report.results.push({
-            reservationId: candidate.reservationId,
-            result: "released",
-            reason: "the booking expired and no matching transfer was found",
-          });
-          report.releasedMicros += candidate.reservedMicros;
-          continue;
-        }
+        // A complete history scan proves only that no transfer was found yet.
+        // Wall-clock expiry is not proof that the signed blockhash is invalid.
+        // Keep the booking until chain evidence or an audited operator release.
         report.results.push({
           reservationId: candidate.reservationId,
           result: "pending",
@@ -341,24 +326,9 @@ export async function reconcileSvm(
       });
       continue;
     }
-    // A pending or mismatched signature after the authorization window and the
-    // blockhash lifetime can never land a matching transfer. Release it then.
-    if (facts.expiresAtMs !== null && now() > facts.expiresAtMs) {
-      rail.store.reconcileCharged(candidate.reservationId, { outcome: "released" }, {
-        reason: "never_landed",
-        tx_signature: signature,
-        expires_at_ms: facts.expiresAtMs,
-        released_at_ms: now(),
-      });
-      report.results.push({
-        reservationId: candidate.reservationId,
-        result: "released",
-        reason: "the booking expired and no matching transfer was verified",
-        signature,
-      });
-      report.releasedMicros += candidate.reservedMicros;
-      continue;
-    }
+    // A pending or mismatched result does not prove the signed payment can
+    // never land. A wall-clock deadline may precede signing after approval or
+    // outpace a stalled cluster. Retain the booking without network expiry proof.
     report.results.push({
       reservationId: candidate.reservationId,
       result: check.status === "mismatch" ? "mismatch" : "pending",

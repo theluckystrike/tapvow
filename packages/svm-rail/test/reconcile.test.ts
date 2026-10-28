@@ -204,62 +204,57 @@ describe("reconcileSvm", () => {
     expect(report.confirmedMicros).toBe(0);
   });
 
-  test("a booking that never landed is released after its expiry", async () => {
+  test("a complete empty scan after wall-clock expiry retains the booking and budget", async () => {
     const rail = openRail();
     const chain = new FakeChain();
     const id = bookChargeFull(rail, { expires_at_ms: Date.now() - 1000 });
 
     const report = await reconcileSvm(rail, chain);
 
-    expect(report.results[0]).toMatchObject({ reservationId: id, result: "released" });
-    expect(report.releasedMicros).toBe(10_000);
-    const released = rail.ledger
-      .entries()
-      .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "released");
-    expect(released).toHaveLength(1);
-    expect((released[0]!.payload as any).charged_micros).toBe(0);
-    expect((released[0]!.payload as any).details.reason).toBe("never_landed");
-    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(0);
+    expect(report.results[0]).toMatchObject({ reservationId: id, result: "pending" });
+    expect(report.releasedMicros).toBe(0);
+    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(10_000);
+    expect(rail.ledger.entries().filter((entry) => entry.kind === "x402.settle" &&
+      (entry.payload as any).outcome === "released")).toHaveLength(0);
   });
 
-  test("a booking with a recorded signature that is still pending is released after its expiry", async () => {
+  test("a pending signed payment after wall-clock expiry remains booked through a cluster stall", async () => {
     const rail = openRail();
     const chain = new FakeChain();
     const sig = signature(15);
     const id = bookChargeFull(rail, { tx_signature: sig, expires_at_ms: Date.now() - 1000 });
 
-    const report = await reconcileSvm(rail, chain);
+    const first = await reconcileSvm(rail, chain);
+    expect(first.results[0]).toMatchObject({ reservationId: id, result: "pending" });
+    expect(first.releasedMicros).toBe(0);
+    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(10_000);
 
-    expect(report.results[0]).toMatchObject({ reservationId: id, result: "released" });
-    expect(report.releasedMicros).toBe(10_000);
-    const released = rail.ledger
-      .entries()
-      .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "released");
-    expect(released).toHaveLength(1);
-    expect((released[0]!.payload as any).details.reason).toBe("never_landed");
-    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(0);
+    // Blocks resume and the still-valid signed transaction lands. Its budget
+    // was never made available for another purchase during the stall.
+    transfer(chain, sig);
+    const second = await reconcileSvm(rail, chain);
+    expect(second.results[0]).toMatchObject({ reservationId: id, result: "settled", signature: sig });
+    expect(second.confirmedMicros).toBe(10_000);
+    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(10_000);
+    expect(rail.ledger.entries().filter((entry) => entry.kind === "x402.settle" &&
+      (entry.payload as any).outcome === "released")).toHaveLength(0);
   });
 
-  test("a booking with a mismatched signature is released after its expiry", async () => {
+  test("a mismatched signature after wall-clock expiry is not proof of cancellation", async () => {
     const rail = openRail();
     const chain = new FakeChain();
     const sig = signature(16);
     chain.record(sig, {
-      network: NETWORK,
-      mint: USDC_MINT,
-      payTo: PAYEE,
-      amountAtomic: "99",
+      network: NETWORK, mint: USDC_MINT, payTo: PAYEE, amountAtomic: "99",
       payer: "4pfvnqqv8wSp6BjCSu59siFZCnTwa3ZTkmFNpb5Y77PQ",
     });
     const id = bookChargeFull(rail, { tx_signature: sig, expires_at_ms: Date.now() - 1000 });
 
     const report = await reconcileSvm(rail, chain);
 
-    expect(report.results[0]).toMatchObject({ reservationId: id, result: "released" });
-    expect(report.releasedMicros).toBe(10_000);
-    expect((rail.ledger.entries().filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "released")[0]!.payload as any).details.reason).toBe(
-      "never_landed",
-    );
+    expect(report.results[0]).toMatchObject({ reservationId: id, result: "mismatch" });
+    expect(report.releasedMicros).toBe(0);
+    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(10_000);
   });
 
   test("a booking before its expiry stays charged_full", async () => {

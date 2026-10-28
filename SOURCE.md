@@ -21,3 +21,7 @@ The development branch has a saved report of 79 `svm-rail` tests passing and a p
 - These source files do not establish an npm package, stable tag or release.
 - Saved evidence does not establish a live Solana devnet or mainnet settlement.
 - The Stripe rail has not passed a live sandbox end-to-end run.
+
+## Conservative settlement maintenance
+
+This experimental candidate adds a small maintenance patch after the source snapshot. Reconcile no longer releases an unknown signed payment from a wall-clock deadline alone. Its exact signed blockhash expiry is not proven, so the booking stays charged in full until chain evidence or an explicit audited operator release. The code diff and regressions are visible in this branch's commit. The original clean snapshot remains separate for comparison.
