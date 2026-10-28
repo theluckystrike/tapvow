@@ -1,0 +1,114 @@
+// file: duration.mjs
+export function parseDuration(text) {
+  if (typeof text !== 'string') throw new TypeError('Input must be a string');
+  let total = 0;
+  const parts = text.trim().split(/\s+/);
+  for (const part of parts) {
+    const match = part.match(/^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/);
+    if (!match) throw new TypeError('Invalid duration format');
+    const [, value, unit] = match;
+    const num = parseFloat(value);
+    switch (unit) {
+      case 'ms': total += Math.round(num); break;
+      case 's': total += Math.round(num * 1000); break;
+      case 'm': total += Math.round(num * 60 * 1000); break;
+      case 'h': total += Math.round(num * 60 * 60 * 1000); break;
+      case 'd': total += Math.round(num * 24 * 60 * 60 * 1000); break;
+    }
+  }
+  if (total === 0 && text.trim() !== '') throw new TypeError('Invalid duration format');
+  return total;
+}
+
+export function formatDuration(ms) {
+  if (typeof ms !== 'number' || !isFinite(ms) || ms < 0) throw new TypeError('Input must be a non-negative finite number');
+  const absMs = Math.round(ms);
+  const d = Math.floor(absMs / (24 * 60 * 60 * 1000));
+  let rem = absMs % (24 * 60 * 60 * 1000);
+  const h = Math.floor(rem / (60 * 60 * 1000));
+  rem %= (60 * 60 * 1000);
+  const m = Math.floor(rem / (60 * 1000));
+  rem %= (60 * 1000);
+  const s = Math.floor(rem / 1000);
+  const msPart = rem % 1000;
+  let result = '';
+  if (d > 0) result += `${d}d`;
+  if (h > 0) result += `${h}h`;
+  if (m > 0) result += `${m}m`;
+  if (s > 0) result += `${s}s`;
+  if (msPart > 0) result += `${msPart}ms`;
+  return result || '0ms';
+}
+
+// file: duration.test.mjs
+import { describe, it } from 'node:test';
+import { strict as assert } from 'node:assert/strict';
+import { parseDuration, formatDuration } from './duration.mjs';
+
+describe('parseDuration', () => {
+  it('parses milliseconds', () => {
+    assert.equal(parseDuration('50ms'), 50);
+  });
+  it('parses seconds', () => {
+    assert.equal(parseDuration('45s'), 45000);
+  });
+  it('parses minutes', () => {
+    assert.equal(parseDuration('2m'), 120000);
+  });
+  it('parses hours', () => {
+    assert.equal(parseDuration('1h'), 3600000);
+  });
+  it('parses days', () => {
+    assert.equal(parseDuration('2d'), 172800000);
+  });
+  it('parses combined units', () => {
+    assert.equal(parseDuration('1h 5m 10s'), 3600000 + 300000 + 10000);
+  });
+  it('handles decimal values', () => {
+    assert.equal(parseDuration('1.5h'), 5400000);
+    assert.equal(parseDuration('0.25d'), 21600000);
+    assert.equal(parseDuration('1.5h 30m'), 5400000 + 1800000);
+  });
+  it('throws on invalid input', () => {
+    assert.throws(() => parseDuration('abc'), TypeError);
+    assert.throws(() => parseDuration('1x'), TypeError);
+    assert.throws(() => parseDuration(''), TypeError);
+    assert.throws(() => parseDuration(null), TypeError);
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats milliseconds', () => {
+    assert.equal(formatDuration(50), '50ms');
+  });
+  it('formats seconds', () => {
+    assert.equal(formatDuration(45000), '45s');
+  });
+  it('formats minutes', () => {
+    assert.equal(formatDuration(120000), '2m');
+  });
+  it('formats hours', () => {
+    assert.equal(formatDuration(3600000), '1h');
+  });
+  it('formats days', () => {
+    assert.equal(formatDuration(172800000), '2d');
+  });
+  it('formats combined units', () => {
+    assert.equal(formatDuration(3600000 + 300000 + 10000), '1h5m10s');
+  });
+  it('formats decimal-derived values', () => {
+    assert.equal(formatDuration(5400000), '1h30m');
+    assert.equal(formatDuration(21600000), '6h'); // 0.25d = 6h
+    assert.equal(formatDuration(5400000 + 1800000), '2h'); // 1.5h + 30m = 2h
+  });
+  it('handles zero', () => {
+    assert.equal(formatDuration(0), '0ms');
+  });
+  it('throws on invalid input', () => {
+    assert.throws(() => formatDuration(-1), TypeError);
+    assert.throws(() => formatDuration(NaN), TypeError);
+    assert.throws(() => formatDuration(Infinity), TypeError);
+    assert.throws(() => formatDuration('abc'), TypeError);
+    assert.throws(() => formatDuration(null), TypeError);
+  });
+});

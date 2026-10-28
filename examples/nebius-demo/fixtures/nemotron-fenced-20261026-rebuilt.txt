@@ -1,0 +1,48 @@
+```javascript
+// file: duration.mjs
+export function parseDuration(text) {
+  if (typeof text !== 'string') throw new TypeError('Input must be a string');
+  const pattern = /(\d+(?:\.\d+)?)\s*(d|h|m|s|ms)/gi;
+  let total = 0;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const value = Number(match[1]);
+    const unit = match[2].toLowerCase();
+    let ms;
+    switch (unit) {
+      case 'd': ms = value * 24 * 60 * 60 * 1000; break;
+      case 'h': ms = value * 60 * 60 * 1000; break;
+      case 'm': ms = value * 60 * 1000; break;
+      case 's': ms = value * 1000; break;
+      case 'ms': ms = value; break;
+    }
+    total += ms;
+  }
+  const cleaned = text.replace(pattern, '').replace(/\s/g, '');
+  if (cleaned.length > 0) throw new TypeError('Invalid duration format');
+  return total;
+}
+```
+
+```javascript
+// file: duration.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseDuration } from './duration.mjs';
+
+test('parseDuration basic units', () => {
+  assert.strictEqual(parseDuration('45s'), 45_000);
+  assert.strictEqual(parseDuration('1h30m'), 5_400_000);
+  assert.strictEqual(parseDuration('2d'), 172_800_000);
+  assert.strictEqual(parseDuration('1h 5m 10s'), 3_910_000);
+  assert.strictEqual(parseDuration('250ms'), 250);
+});
+
+test('parseDuration throws on bad input', () => {
+  assert.throws(() => parseDuration('1x'), TypeError);
+  assert.throws(() => parseDuration('1h2'), TypeError);
+  assert.throws(() => parseDuration(''), TypeError);
+  assert.throws(() => parseDuration('abc'), TypeError);
+  assert.throws(() => parseDuration('1h 2x'), TypeError);
+});
+```

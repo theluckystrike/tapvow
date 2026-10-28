@@ -1,0 +1,12 @@
+{
+  "name": "@mandate/payee-guard",
+  "version": "0.1.0",
+  "description": "Payee binding and amount bounds that block prompt-injected payments.",
+  "author": "Michael Lip (https://github.com/theluckystrike)",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "node --no-warnings --import tsx --test --test-timeout=120000 test/*.test.ts" },
+  "dependencies": { "@mandate/core": "0.1.0" }
+}

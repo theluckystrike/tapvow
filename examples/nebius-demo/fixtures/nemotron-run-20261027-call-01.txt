@@ -1,0 +1,47 @@
+// file: duration.mjs
+export function parseDuration(text) {
+  if (typeof text !== 'string') throw new TypeError('Input must be a string');
+  const match = text.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/);
+  if (!match) throw new TypeError('Invalid duration format');
+  const [, value, unit] = match;
+  const num = parseFloat(value);
+  switch (unit) {
+    case 'ms': return num;
+    case 's': return num * 1000;
+    case 'm': return num * 60 * 1000;
+    case 'h': return num * 60 * 60 * 1000;
+    case 'd': return num * 24 * 60 * 60 * 1000;
+  }
+}
+
+// file: duration.test.mjs
+import { describe, it } from 'node:test';
+import { strict as assert } from 'node:assert/strict';
+import { parseDuration } from './duration.mjs';
+
+describe('parseDuration', () => {
+  it('parses milliseconds', () => {
+    assert.equal(parseDuration('50ms'), 50);
+  });
+  it('parses seconds', () => {
+    assert.equal(parseDuration('45s'), 45000);
+  });
+  it('parses minutes', () => {
+    assert.equal(parseDuration('2m'), 120000);
+  });
+  it('parses hours', () => {
+    assert.equal(parseDuration('1h'), 3600000);
+  });
+  it('parses days', () => {
+    assert.equal(parseDuration('2d'), 172800000);
+  });
+  it('parses combined units', () => {
+    assert.equal(parseDuration('1h 5m 10s'), 3900000 + 300000 + 10000); // 1h=3.6M, 5m=300k, 10s=10k → 4.01M
+  });
+  it('throws on invalid input', () => {
+    assert.throws(() => parseDuration('abc'), TypeError);
+    assert.throws(() => parseDuration('1x'), TypeError);
+    assert.throws(() => parseDuration(''), TypeError);
+    assert.throws(() => parseDuration(null), TypeError);
+  });
+});

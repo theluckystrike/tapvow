@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mandate.dev/schema/mandate.schema.json",
+  "title": "Mandate",
+  "description": "A spend intent in the shape of a Google AP2 IntentMandate, extended with budgets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mandate_version",
+    "type",
+    "id",
+    "issuer",
+    "agents",
+    "natural_language_description",
+    "currency",
+    "budget",
+    "per_call_cap",
+    "allowed_payees",
+    "rate_limit",
+    "approval_threshold",
+    "rails",
+    "not_before",
+    "expires_at",
+    "created_at"
+  ],
+  "properties": {
+    "mandate_version": { "const": "0.1" },
+    "type": { "const": "IntentMandate" },
+    "id": {
+      "type": "string",
+      "pattern": "^mdt_[A-Za-z0-9_-]{8,64}$"
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "public_key"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "public_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1000,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]{1,64}$"
+      }
+    },
+    "natural_language_description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "currency": { "const": "USD" },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "period"],
+      "properties": {
+        "total": { "$ref": "#/$defs/usd" },
+        "period": { "enum": ["lifetime", "day", "month"] }
+      }
+    },
+    "per_call_cap": { "$ref": "#/$defs/usd" },
+    "allowed_payees": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rail", "id"],
+        "properties": {
+          "rail": { "$ref": "#/$defs/rail" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      }
+    },
+    "rate_limit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_calls", "window_seconds"],
+      "properties": {
+        "max_calls": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "window_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+      }
+    },
+    "approval_threshold": { "$ref": "#/$defs/usd" },
+    "rails": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/rail" }
+    },
+    "not_before": { "$ref": "#/$defs/timestamp" },
+    "expires_at": { "$ref": "#/$defs/timestamp" },
+    "created_at": { "$ref": "#/$defs/timestamp" }
+  },
+  "patternProperties": {
+    "^store_id$": {
+      "type": "string",
+      "pattern": "^st_[A-Za-z0-9_-]{16,64}$"
+    }
+  },
+  "$defs": {
+    "rail": { "enum": ["llm", "x402", "stripe_spt", "card"] },
+    "usd": { "type": "string", "pattern": "^\\d{1,9}(\\.\\d{1,6})?$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    }
+  }
+}

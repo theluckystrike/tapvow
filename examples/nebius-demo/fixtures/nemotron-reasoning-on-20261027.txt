@@ -1,0 +1,63 @@
+
+
+// file: duration.mjs
+export function parseDuration(text) {
+  if (typeof text !== 'string') throw new TypeError('Input must be a string');
+  const trimmed = text.trim();
+  if (trimmed.length === 0) throw new TypeError('Empty string');
+  const pattern = /(\d+(?:\.\d+)?)\s*(d|h|m|s|ms)/gi;
+  let match;
+  let total = 0;
+  let lastIndex = 0;
+  while ((match = pattern.exec(trimmed)) !== null) {
+    const [, valueStr, unit] = match;
+    const value = Number(valueStr);
+    let factor;
+    switch (unit) {
+      case 'd': factor = 24 * 60 * 60 * 1000; break;
+      case 'h': factor = 60 * 60 * 1000; break;
+      case 'm': factor = 60 * 1000; break;
+      case 's': factor = 1000; break;
+      case 'ms': factor = 1; break;
+      default: throw new TypeError(`Unknown unit ${unit}`);
+    }
+    total += value * factor;
+    lastIndex = pattern.lastIndex;
+  }
+  const rest = trimmed.slice(0, lastIndex) + trimmed.slice(lastIndex);
+  const remaining = rest.replace(pattern, '').trim();
+  if (remaining.length > 0) throw new TypeError('Invalid input');
+  return total;
+}
+
+// file: duration.test.mjs
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseDuration } from './duration.mjs';
+
+describe('parseDuration', () => {
+  it('parses seconds', () => {
+    assert.strictEqual(parseDuration('45s'), 45000);
+  });
+  it('parses hours and minutes', () => {
+    assert.strictEqual(parseDuration('1h30m'), 5400000);
+  });
+  it('parses days', () => {
+    assert.strictEqual(parseDuration('2d'), 172800000);
+  });
+  it('parses spaced components', () => {
+    assert.strictEqual(parseDuration('1h 5m 10s'), 3910000);
+  });
+  it('parses milliseconds', () => {
+    assert.strictEqual(parseDuration('250ms'), 250);
+  });
+  it('throws on invalid unit', () => {
+    assert.throws(() => parseDuration('1x'), TypeError);
+  });
+  it('throws on mixed invalid', () => {
+    assert.throws(() => parseDuration('1h2x'), TypeError);
+  });
+  it('throws on empty string', () => {
+    assert.throws(() => parseDuration(''), TypeError);
+  });
+});

@@ -1,0 +1,50 @@
+{
+  "name": "tapvow",
+  "version": "0.1.0",
+  "description": "One signed spending limit for every AI agent, enforced at a local gateway, with a tamper-evident receipt ledger.",
+  "license": "MIT",
+  "author": "Michael Lip (https://github.com/theluckystrike)",
+  "homepage": "https://github.com/theluckystrike/tapvow#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theluckystrike/tapvow.git",
+    "directory": "packages/spendmandate"
+  },
+  "bugs": {
+    "url": "https://github.com/theluckystrike/tapvow/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "llm",
+    "budget",
+    "spend-limit",
+    "x402",
+    "gateway",
+    "openai",
+    "anthropic",
+    "claude-code",
+    "nebius",
+    "ledger"
+  ],
+  "type": "module",
+  "bin": {
+    "tapvow": "dist/cli.js",
+    "spendmandate": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepack": "node build.mjs",
+    "test": "node build.mjs && env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u TAPVOW_HOME -u SPENDMANDATE_HOME node --no-warnings --import tsx --test --test-timeout=120000 test/*.test.ts"
+  },
+  "devDependencies": {
+    "esbuild": "0.23.1"
+  }
+}
