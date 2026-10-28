@@ -6,7 +6,7 @@ This is an experimental library package. No successful live Solana payment is cl
 
 ## What it does
 
-An agent never holds a Solana key. The agent calls the gateway with its virtual key and a URL. The gateway checks the 402 quote against the signed mandate, holds the worst-case cost, signs a partially signed SPL transfer, lets the facilitator add the fee-payer signature and submit it, then reads the transaction signature on devnet and settles a matching transfer or retains the uncertain booking.
+An embedding application supplies the payer signer and must keep it out of the agent process. The embedding gateway must authenticate the caller and pass verified agent and mandate IDs. The library checks the 402 quote against the signed mandate, holds the worst-case cost, signs a partially signed SPL transfer, lets the facilitator add the fee-payer signature and submit it, then reads the transaction signature and settles a matching transfer or retains the uncertain booking. This package does not provide a public gateway route or CLI integration.
 
 The package matches `@x402/core` 2.28.0 and `@x402/svm` 2.28.0. It uses `@solana/kit` 5.x as `@x402/svm` requires.
 

@@ -18,6 +18,10 @@ The source-build smoke used Node 22.23.4, an isolated TapVow home and a fake ups
 
 A separate commit, `48553efeb3c13affa2f2555f1ca8935ac0c67cdb`, adds the demo genesis guard. Its four mocked preflight tests and SVM package typecheck passed. The base dependency installation and 168 checks were not repeated, since this guard changes no dependency, CLI or shared money logic. This documentation update changes no runtime source.
 
+The later conservative replay and failed-response maintenance at `fe48ed94228c913ddd451bfed5e878ced3272cc8` passed 87 SVM tests, 22 focused shared-store tests, 66 payee tests and the pinned TypeScript 5.6.3 typecheck. Three native accounting regressions failed when the runtime was reverted to `36dd8d4`, then passed with the fix. An independent two-case fake-state fixture also failed the old runtime and passed the fix. It held the full simulated budget and refused the extra request. These are local accounting checks, not real transfer or cryptographic chain proof.
+
+The successful isolated dependency installation was reused because this maintenance changes no lockfile or dependency. The earlier `892da04` source-build and fake-call smoke remains dated evidence for that exact commit; it is not relabelled as a new live run or a repeated full source smoke on `fe48ed9`.
+
 These are local and mocked checks. Saved evidence does not establish a live Solana settlement. A genuine devnet payment still needs funded test wallets, canonical devnet USDC and an end-to-end verification and resource-delivery run.
 
 ## What a reader should not conclude
@@ -28,7 +32,7 @@ These are local and mocked checks. Saved evidence does not establish a live Sola
 
 ## Conservative settlement maintenance
 
-This experimental candidate adds a small maintenance patch after the source snapshot. Reconcile no longer releases an unknown signed payment from a wall-clock deadline alone. Its exact signed blockhash expiry is not proven, so the booking stays charged in full until chain evidence or an explicit audited operator release. The code diff and regressions are visible in this branch's commit. The original clean snapshot remains separate for comparison.
+This experimental candidate includes conservative maintenance after the source snapshot. A local deadline, historical signature mention, atomic duplicate claim or unbound failed transaction ID never automatically frees the budget of a signed request. Such bookings remain `charged_full` until their outcome is established or an operator makes an explicit audited release. Matching verified transfers can settle bookings. Genuine failed or duplicate payments can therefore over-hold budget. Exact payer-signature authorization binding is not implemented. The original clean snapshot remains separate for comparison.
 
 ## Demo setup safety
 

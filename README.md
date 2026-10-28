@@ -9,10 +9,12 @@ TapVow puts one signed spending limit in front of every AI agent you run, enforc
 The `tapvow` npm package is not published. Build and run the command from this source snapshot. You need Node 22.13 or newer.
 
 ```sh
+git clone --branch svm-experimental --single-branch https://github.com/theluckystrike/tapvow.git tapvow-svm
+cd tapvow-svm
 npm ci
 npm run build --workspace tapvow
 export TAPVOW_HOME="$PWD/../tapvow-svm-demo-home"
-node packages/spendmandate/dist/cli.js init --budget 10
+node packages/spendmandate/dist/cli.js init --budget 10 --port 18731
 node packages/spendmandate/dist/cli.js start --fake-upstream --port 18731
 ```
 
@@ -145,11 +147,11 @@ The default is the largest power of two, or the model limit, whose output costs 
 
 `packages/svm-rail` pays SPL USDC resources over x402 on Solana through the same mandate, budget and ledger. This package is the reason for this snapshot; it is not in the current public main branch.
 
-- An agent calls the gateway with its virtual key and a URL. The gateway checks the 402 quote against the signed mandate, holds the worst-case cost, signs a partially signed SPL transfer and lets the facilitator add the fee-payer signature and submit it. It then reads the transaction signature and settles or releases the hold.
+- An embedding application calls the library with a request URL and authenticated agent and mandate IDs. The rail checks the 402 quote against the signed mandate, holds the worst-case cost, signs a partially signed SPL transfer and lets the facilitator add the fee-payer signature and submit it. It then reads the transaction signature and settles a matching transfer or retains the uncertain signed booking. The library is not wired into a public gateway route or the CLI.
 - Only the `exact` scheme on an enabled Solana network is accepted, and the requirement must name a valid fee payer. Solana addresses stay case sensitive.
 - The payee allowlist, USDC mint, request URL and amount bounds are checked before anything is signed.
-- `reconcileSvm` settles or releases `charged_full` bookings from chain state, refuses a genesis hash that does not match the candidate networks, and uses the same atomic signature claim as the live path, so one transfer cannot be booked twice.
-- Setup, the operator release command and the three-key devnet demo are in `packages/svm-rail/README.md`. No devnet payment has been made from this snapshot.
+- `reconcileSvm` settles a matching transfer and retains ambiguous signed bookings. It refuses a genesis hash that does not match the candidate networks. One verified transfer has at most one committed settlement claim per mandate; separate ambiguous reservations can deliberately over-hold budget until explicit audited operator action.
+- Setup, the operator release command and the three-key devnet demo are in `packages/svm-rail/README.md`. Saved evidence does not establish a live Solana settlement.
 
 ### Passkey approval page
 

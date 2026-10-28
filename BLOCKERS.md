@@ -22,7 +22,7 @@ The Solana rail has passed its test suite against a fake facilitator. No devnet 
 
 Set `SVM_KEY_FILE`, `SVM_PAYEE_KEY_FILE`, `SVM_FEE_PAYER_KEY_FILE`, `SVM_RPC_URL` and `SVM_DEMO_DIR`, then run `npm run devnet-demo --workspace @mandate/svm-rail`. The demo never requests a faucet itself. If a balance is low it prints `OWNER-NEEDED` and stops. Read `packages/svm-rail/README.md` before running it. Keep the explorer links from any run as proof before claiming a devnet payment.
 
-The rail must also read the transaction signature back from the RPC endpoint and settle or release the hold from that state. A devnet claim needs that settle path, not just a submitted transaction.
+The rail must also read a matching finalized transfer back from the RPC endpoint before treating it as settled. A local deadline, historical signature mention, duplicate claim or unbound failed ID does not release a signed booking. Ambiguous bookings stay charged in full and may over-hold budget until explicit audited operator action. A devnet claim needs verified settlement and delivered resource evidence, not just a submitted transaction.
 
 ## Step 7 Stripe sandbox
 
