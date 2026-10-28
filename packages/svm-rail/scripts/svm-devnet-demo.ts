@@ -42,6 +42,7 @@ import { createSvmPaymentGuard } from "../src/guard.js";
 import { createSvmRail } from "../src/rail.js";
 import { rpcSolanaChain } from "../src/chain.js";
 import { resolveDemoActors, type DemoActors } from "../src/demo.js";
+import { prepareDevnetDemoActors } from "../src/demo-preflight.js";
 import type { Approver } from "../src/types.js";
 
 const NETWORK = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
@@ -145,22 +146,24 @@ async function main(): Promise<void> {
   }
   const signer: TransactionSigner = await createKeyPairSignerFromBytes(keyBytes);
   const payer = String(signer.address);
+  const rpc = createSolanaRpc(devnet(RPC_URL));
 
   let actors: DemoActors;
   try {
-    actors = await resolveDemoActors({
-      payerSigner: signer,
-      payeeKeyFile: process.env.SVM_PAYEE_KEY_FILE,
-      feePayerKeyFile: process.env.SVM_FEE_PAYER_KEY_FILE,
-      loadKey,
-    });
+    actors = await prepareDevnetDemoActors(rpc, () =>
+      resolveDemoActors({
+        payerSigner: signer,
+        payeeKeyFile: process.env.SVM_PAYEE_KEY_FILE,
+        feePayerKeyFile: process.env.SVM_FEE_PAYER_KEY_FILE,
+        loadKey,
+      }),
+    );
   } catch (err) {
     ownerNeeded([err instanceof Error ? err.message : String(err)]);
     return;
   }
   const payTo = actors.payeeAddress;
   const feePayer = actors.feePayerAddress;
-  const rpc = createSolanaRpc(devnet(RPC_URL));
 
   let sol = 0n;
   let usdc = 0n;
