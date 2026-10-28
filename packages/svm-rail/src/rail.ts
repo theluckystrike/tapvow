@@ -210,8 +210,8 @@ export function createSvmRail(opts: SvmRailOptions): SvmRail {
     };
   }
 
-  /** True when a different reservation already booked this on-chain signature. */
-  function signatureBooked(signature: string, reservationId: string): boolean {
+  /** Historical mentions are unbound hints, never proof that this booking is paid. */
+  function signatureMentionedElsewhere(signature: string, reservationId: string): boolean {
     for (const entry of ledger.entries()) {
       if (entry.kind !== "x402.settle") continue;
       const payload = entry.payload as Record<string, unknown>;
@@ -583,22 +583,26 @@ export function createSvmRail(opts: SvmRailOptions): SvmRail {
       body: string;
       redirectHeaders?: Record<string, string>;
     }): Promise<PayResult> => {
-      const replayDenied = (): PayResult => {
-        store.release(args.rid, { reason: "replayed_signature" });
-        appendBlocked(args.auth, blockedAsk, "replayed_signature", "the on-chain signature was already booked for another call");
+      const retainSignedBooking = (code: string, message: string, status: number, chainReason?: string): PayResult => {
+        const event = store.chargeFull(args.rid, {
+          ...details(args.signature, true),
+          unconfirmed_reason: code,
+          tx_signature_source: args.source,
+          ...(chainReason ? { chain_reason: chainReason } : {}),
+        });
+        appendBlocked(args.auth, blockedAsk, code, message);
         return {
-          status: 403,
-          headers: { ...mandateHeaders(args.auth.mandateId, 0, null), "content-type": "application/json" },
-          body: JSON.stringify({
-            error: {
-              type: "mandate_denied",
-              code: "replayed_signature",
-              message: "the on-chain signature was already booked for another call",
-            },
-          }),
+          status,
+          headers: { ...mandateHeaders(args.auth.mandateId, event.chargedMicros, null), "content-type": "application/json" },
+          body: JSON.stringify({ error: { type: "mandate_unconfirmed", code, message } }),
         };
       };
-      if (signatureBooked(args.signature, args.rid)) return replayDenied();
+      const replayDenied = (): PayResult => retainSignedBooking(
+        "replayed_signature",
+        "the response names a signature recorded elsewhere; this signed booking stays charged until its own outcome is proven",
+        403,
+      );
+      if (signatureMentionedElsewhere(args.signature, args.rid)) return replayDenied();
       const check = await opts.chain.verifyTransfer(args.signature, {
         network: args.requirement.network,
         mint: args.requirement.asset,
@@ -608,8 +612,8 @@ export function createSvmRail(opts: SvmRailOptions): SvmRail {
       });
       if (check.status === "success") {
         // The signature claim and the settle commit together. A duplicate key
-        // means a concurrent call settled this signature first, so this hold
-        // is released and the call is refused.
+        // means another call claimed this signature. That does not bind it to
+        // this authorization, so the signed booking is retained, not released.
         const event = store.settleClaimed(
           args.rid,
           null,
@@ -635,15 +639,15 @@ export function createSvmRail(opts: SvmRailOptions): SvmRail {
         };
       }
       if (check.status === "failed") {
-        store.release(args.rid, { reason: "settlement_failed", tx_signature: args.signature, chain_reason: check.reason });
-        appendBlocked(args.auth, blockedAsk, "settlement_failed", check.reason);
-        return {
-          status: 402,
-          headers: { "content-type": "application/json", ...mandateHeaders(args.auth.mandateId, 0, null) },
-          body: JSON.stringify({
-            error: { type: "mandate_denied", code: "settlement_failed", message: "the Solana transfer failed on chain" },
-          }),
-        };
+        // A facilitator-supplied failed ID is not proof that our signed
+        // authorization failed. The current adapter does not bind the payer
+        // signature, so retain uncertain spend rather than free its budget.
+        return retainSignedBooking(
+          "unbound_failed_signature",
+          "the reported failed transaction is not bound to this authorization; the signed booking stays charged",
+          502,
+          check.reason,
+        );
       }
       // A confirmed signature that we cannot read, or a different transfer, is
       // uncertain money. Fail closed and let reconcile decide.

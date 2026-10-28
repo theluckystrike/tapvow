@@ -346,7 +346,7 @@ describe("SVM rail payment guard", () => {
     ).toThrow(/bound to store/);
   });
 
-  test("a replayed on-chain signature is refused and the second hold is released", async () => {
+  test("a replayed on-chain signature is refused and the unbound second booking stays charged", async () => {
     const s = await setup();
     const before = s.chain.balance;
     s.chain.record(s.settleSignature, s.facts());
@@ -367,8 +367,8 @@ describe("SVM rail payment guard", () => {
     const released = s.rail.ledger
       .entries()
       .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "released");
-    expect(released).toHaveLength(1);
-    expect((released[0]!.payload as any).charged_micros).toBe(0);
+    expect(released).toHaveLength(0);
+    expect(s.rail.store.spent(s.rail.mandate.id).committedMicros).toBe(20_000);
   });
 
   test("a replay found on the chain is refused when the facilitator sends no settlement header", async () => {
@@ -396,12 +396,13 @@ describe("SVM rail payment guard", () => {
       .entries()
       .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "settled");
     expect(settled).toHaveLength(1);
-    expect(s.rail.store.spent(s.rail.mandate.id).committedMicros).toBe(10_000);
+    expect(s.rail.store.spent(s.rail.mandate.id).committedMicros).toBe(20_000);
     const released = s.rail.ledger
       .entries()
       .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "released");
-    expect(released).toHaveLength(1);
-    expect((released[0]!.payload as any).details.reason).toBe("replayed_signature");
+    expect(released).toHaveLength(0);
+    expect(s.rail.ledger.entries().some((entry) => entry.kind === "x402.settle" &&
+      (entry.payload as any).outcome === "charged_full")).toBe(true);
   });
 
   test("a settle that stays pending past the deadline is booked unconfirmed, not released", async () => {
@@ -448,12 +449,13 @@ describe("SVM rail payment guard", () => {
       .entries()
       .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "settled");
     expect(settled).toHaveLength(1);
-    expect(s.rail.store.spent(s.rail.mandate.id).committedMicros).toBe(10_000);
+    expect(s.rail.store.spent(s.rail.mandate.id).committedMicros).toBe(20_000);
     const released = s.rail.ledger
       .entries()
       .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "released");
-    expect(released).toHaveLength(1);
-    expect((released[0]!.payload as any).details.reason).toBe("replayed_signature");
+    expect(released).toHaveLength(0);
+    expect(s.rail.ledger.entries().some((entry) => entry.kind === "x402.settle" &&
+      (entry.payload as any).outcome === "charged_full")).toBe(true);
   });
 
   test("a transfer older than the search window is not booked and the hold stays charged", async () => {

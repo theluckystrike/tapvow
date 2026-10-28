@@ -87,7 +87,7 @@ describe("reconcileSvm", () => {
     expect((settled[0]!.payload as any).details.settlement_verified).toBe(true);
   });
 
-  test("a failed transaction releases the booking", async () => {
+  test("an unbound failed transaction keeps the booking charged", async () => {
     const rail = openRail();
     const chain = new FakeChain();
     const sig = signature(10);
@@ -107,13 +107,13 @@ describe("reconcileSvm", () => {
 
     const report = await reconcileSvm(rail, chain);
 
-    expect(report.results[0]?.result).toBe("released");
-    expect(report.releasedMicros).toBe(10_000);
+    expect(report.results[0]?.result).toBe("pending");
+    expect(report.releasedMicros).toBe(0);
     const released = rail.ledger
       .entries()
       .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "released");
-    expect(released).toHaveLength(1);
-    expect((released[0]!.payload as any).charged_micros).toBe(0);
+    expect(released).toHaveLength(0);
+    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(10_000);
   });
 
   test("an RPC error leaves the booking untouched", async () => {
@@ -150,7 +150,7 @@ describe("reconcileSvm", () => {
     expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(20_000);
   });
 
-  test("a signature already settled for another reservation releases the replay", async () => {
+  test("a settled signature does not prove another authorization is already counted", async () => {
     const rail = openRail();
     const chain = new FakeChain();
     const sig = signature(12);
@@ -171,8 +171,8 @@ describe("reconcileSvm", () => {
     const id = bookChargeFull(rail, { tx_signature: sig });
     const report = await reconcileSvm(rail, chain);
 
-    expect(report.results[0]).toMatchObject({ reservationId: id, result: "released" });
-    expect(report.releasedMicros).toBe(10_000);
+    expect(report.results[0]).toMatchObject({ reservationId: id, result: "pending" });
+    expect(report.releasedMicros).toBe(0);
     const settled = rail.ledger
       .entries()
       .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "settled");
@@ -368,7 +368,7 @@ describe("reconcileSvm", () => {
     expect(row.charged_micros).toBe(10_000);
   });
 
-  test("a signature charged full on another reservation is treated as booked", async () => {
+  test("an informational signature mention retains the second uncertain booking", async () => {
     const rail = openRail();
     const chain = new FakeChain();
     const sig = signature(32);
@@ -379,17 +379,17 @@ describe("reconcileSvm", () => {
     const report = await reconcileSvm(rail, chain);
 
     const outcome = report.results.find((result) => result.reservationId === id);
-    expect(outcome).toMatchObject({ reservationId: id, result: "released" });
-    expect(report.releasedMicros).toBe(10_000);
+    expect(outcome).toMatchObject({ reservationId: id, result: "pending" });
+    expect(report.releasedMicros).toBe(0);
     const otherRow = rail.store.database
       .prepare("SELECT status FROM reservations WHERE id = ?")
       .get(other) as { status: string };
-    // The first booking keeps the one transfer; the second is released.
+    // Neither informational mention binds the signature to a unique authorization.
     expect(otherRow.status).toBe("settled");
-    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(10_000);
+    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(20_000);
   });
 
-  test("a live settle that wins the claim makes reconcile release its booking", async () => {
+  test("a live claim winner does not release an unbound reconcile booking", async () => {
     const rail = openRail();
     const base = new FakeChain();
     const sig = signature(33);
@@ -424,16 +424,16 @@ describe("reconcileSvm", () => {
 
     const report = await reconcileSvm(rail, racing);
 
-    expect(report.results[0]).toMatchObject({ reservationId: id, result: "released" });
-    expect(report.releasedMicros).toBe(10_000);
+    expect(report.results[0]).toMatchObject({ reservationId: id, result: "pending" });
+    expect(report.releasedMicros).toBe(0);
     expect(report.confirmedMicros).toBe(0);
     const settled = rail.ledger
       .entries()
       .filter((entry) => entry.kind === "x402.settle" && (entry.payload as any).outcome === "settled");
     expect(settled).toHaveLength(1);
-    // The live settle booked its own 10,000. The reconcile booking is released,
-    // so the one transfer is never counted twice.
-    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(10_000);
+    // The live settle books 10,000; the unbound reconcile booking retains
+    // its 10,000 until exact authorization evidence or operator review.
+    expect(rail.store.spent(rail.mandate.id).committedMicros).toBe(20_000);
   });
 
   test("a swept abandoned x402 booking keeps its facts and can reconcile", async () => {

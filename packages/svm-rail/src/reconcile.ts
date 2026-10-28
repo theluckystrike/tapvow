@@ -1,8 +1,8 @@
-// Reconciles Solana x402 payments the rail booked as charged_full without a
-// confirmed settlement. The only evidence is the chain. A confirmed transfer
-// that matches the signed facts settles the booking; a failed transaction
-// releases it; a signature that another reservation already booked is released;
-// an RPC error leaves the booking untouched (fail closed).
+// Reconciles Solana x402 bookings whose signed payment outcome is uncertain.
+// A matching finalized transfer can settle a booking. Historical signature
+// mentions, duplicate claims and unbound failure responses never free its
+// budget. Uncertain bookings require exact evidence or an audited operator
+// override; an RPC error leaves them unchanged.
 import { auditRail, type GovernedRail } from "@mandate/llm-rail";
 import type { LedgerEntry } from "@mandate/core";
 import type { ChainVerification, SolanaChain } from "./types.js";
@@ -129,11 +129,10 @@ function candidatesFromStore(rail: GovernedRail): Candidate[] {
 }
 
 /**
- * A signature that a different reservation already recorded is not paid twice.
- * The outcome does not matter. A booking charged full with the same signature
- * is as much a claim on that transfer as a settled one.
+ * A historical signature mention is not authorization identity. If another
+ * booking mentions it, retain this booking until its own outcome is proven.
  */
-function bookedElsewhere(entries: Iterable<LedgerEntry>, reservationId: string, signature: string): boolean {
+function signatureMentionedElsewhere(entries: Iterable<LedgerEntry>, reservationId: string, signature: string): boolean {
   for (const entry of entries) {
     if (entry.kind !== "x402.settle") continue;
     const payload = asRecord(entry.payload);
@@ -233,18 +232,13 @@ export async function reconcileSvm(
       signature = search.signature;
     }
 
-    if (bookedElsewhere(rail.ledger.entries(), candidate.reservationId, signature)) {
-      rail.store.reconcileCharged(candidate.reservationId, { outcome: "released" }, {
-        reason: "replayed_signature",
-        tx_signature: signature,
-      });
+    if (signatureMentionedElsewhere(rail.ledger.entries(), candidate.reservationId, signature)) {
       report.results.push({
         reservationId: candidate.reservationId,
-        result: "released",
-        reason: "the signature was already booked for another reservation",
+        result: "pending",
+        reason: "the signature is mentioned by another booking and is not bound to this authorization; booking retained",
         signature,
       });
-      report.releasedMicros += candidate.reservedMicros;
       continue;
     }
 
@@ -283,17 +277,12 @@ export async function reconcileSvm(
         },
       );
       if (event === null) {
-        rail.store.reconcileCharged(candidate.reservationId, { outcome: "released" }, {
-          reason: "replayed_signature",
-          tx_signature: signature,
-        });
         report.results.push({
           reservationId: candidate.reservationId,
-          result: "released",
-          reason: "the signature was already booked for another reservation",
+          result: "pending",
+          reason: "another booking claimed this signature without proving this authorization is already counted; booking retained",
           signature,
         });
-        report.releasedMicros += candidate.reservedMicros;
         continue;
       }
       report.results.push({ reservationId: candidate.reservationId, result: "settled", signature });
@@ -301,18 +290,15 @@ export async function reconcileSvm(
       continue;
     }
     if (check.status === "failed") {
-      rail.store.reconcileCharged(candidate.reservationId, { outcome: "released" }, {
-        reason: "settlement_failed",
-        tx_signature: signature,
-        chain_reason: check.reason,
-      });
+      // Failed status alone does not bind a reported transaction to the signed
+      // authorization. Only an explicit audited operator override can release
+      // this uncertain booking until exact authorization proof is implemented.
       report.results.push({
         reservationId: candidate.reservationId,
-        result: "released",
-        reason: check.reason,
+        result: "pending",
+        reason: "the failed transaction is not bound to this authorization; booking retained",
         signature,
       });
-      report.releasedMicros += candidate.reservedMicros;
       continue;
     }
     // An unreadable result is not proof of anything, so it never releases,

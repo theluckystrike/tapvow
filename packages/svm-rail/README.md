@@ -6,7 +6,7 @@ This is an experimental library package. No successful live Solana payment is cl
 
 ## What it does
 
-An agent never holds a Solana key. The agent calls the gateway with its virtual key and a URL. The gateway checks the 402 quote against the signed mandate, holds the worst-case cost, signs a partially signed SPL transfer, lets the facilitator add the fee-payer signature and submit it, then reads the transaction signature on devnet and settles or releases the hold.
+An agent never holds a Solana key. The agent calls the gateway with its virtual key and a URL. The gateway checks the 402 quote against the signed mandate, holds the worst-case cost, signs a partially signed SPL transfer, lets the facilitator add the fee-payer signature and submit it, then reads the transaction signature on devnet and settles a matching transfer or retains the uncertain booking.
 
 The package matches `@x402/core` 2.28.0 and `@x402/svm` 2.28.0. It uses `@solana/kit` 5.x as `@x402/svm` requires.
 
@@ -36,7 +36,7 @@ The main entry points are below.
 5. A call above the approval line gets a hold first. The approver decides. A timeout or a denial releases the hold.
 6. A cheap RPC preflight runs before any signature. If the RPC does not answer, the call stops and the hold is released.
 7. The rail decodes the signed transaction and proves it moves the exact mint, amount and payee to the payee token account. It allows only that transfer, Compute Budget limit and price instructions under a price cap, and one optional Memo. Any other program, a second token instruction, a payer writable signer outside the transfer, or the payer as fee payer is refused. A mismatch stops the call and releases the hold.
-8. The facilitator settles. The rail reads the returned transaction signature on chain and waits up to 30 s for a finalized matching transfer. A finalized transfer settles the hold. A failed transfer releases it. A transfer that is still pending at the deadline, an unreadable result, a facilitator error, or a redirect after signing books the full amount as unconfirmed for reconcile. Money that may have moved is never released on a timeout or an error.
+8. The facilitator settles. The rail reads the returned transaction signature on chain and waits up to 30 s for a finalized matching transfer. A finalized transfer settles the hold. A reported failed transfer remains charged in full because its ID is not bound to this exact signed authorization. A transfer that is still pending at the deadline, an unreadable result, a facilitator error, or a redirect after signing books the full amount as unconfirmed for reconcile. Money that may have moved is never released on a timeout or an error.
 9. The ledger entry records the signature, the payer signature, the mint, the payee, the fee payer and the settlement source.
 
 ## Fail closed rule
@@ -51,9 +51,9 @@ These cases are not proof that no money moved.
 - A redirect after the payer signed.
 - An RPC error after the payer signed.
 
-Unknown signed payments stay charged in full. This implementation does not persist and prove the exact signed blockhash lifetime, so a wall-clock deadline never causes automatic release. A verified failed transaction may release the booking. An operator can also make an explicit audited override.
+Unknown signed payments stay charged in full. This implementation does not persist and prove the exact signed blockhash lifetime, so a wall-clock deadline never causes automatic release. The current adapter does not bind a reported transaction ID to this exact signed authorization. Replay reports and failed IDs therefore keep the booking charged in full too. Only an explicit audited operator override releases an uncertain signed booking. Pre-sign refusals remain separate.
 
-Every settle path uses one atomic claim function. The live path and the reconcile path both claim the on chain signature in the same database transaction as the settle. A second claim loses and its hold is released.
+Every settle path uses one atomic claim function. The live path and the reconcile path both claim the on chain signature in the same database transaction as the settle. A second claim loses and its signed booking stays charged in full. A signature-only claim is not authorization identity.
 
 ## Failure cases and what is booked
 
@@ -66,8 +66,8 @@ Every settle path uses one atomic claim function. The live path and the reconcil
 | Facilitator error after signing | No settlement proof. The payer history scan may find a transfer, may finish with no match, may hit its cap or deadline, or may fail | A found transfer settles. Any other result books the full amount as unconfirmed; its deadline metadata is not proof of chain expiry | 502 `mandate_unconfirmed` |
 | Redirect after signing | Same as a facilitator error | Same as a facilitator error | 502 `mandate_unconfirmed` |
 | Transfer still pending at the finalized deadline | No final settlement proof | Full amount as unconfirmed; no automatic time-based release | 502 `mandate_unconfirmed` |
-| Transfer failed on chain | The transaction cannot move the money | Hold released | 402 |
-| Replayed signature within one mandate | Another booking already claimed the signature | Second hold released, first booking stays | 403 |
+| Reported failed transaction | The ID is not bound to this signed authorization | Full amount as unconfirmed | 502 `mandate_unconfirmed` |
+| Replayed or historically mentioned signature | No proof this exact signed authorization is already counted | This booking stays charged in full | 403 `mandate_unconfirmed` |
 | Wall-clock deadline passed, with no match or a pending result | No proof that the signed blockhash is invalid | Booking stays charged in full until chain evidence or explicit operator release | None, reconcile only |
 | Expired booking, incomplete or unreadable scan | Nothing about the transfer | The booking stays charged full | None, reconcile only |
 
@@ -75,7 +75,7 @@ A chain read that does not finish is never proof that no money moved. Reconcile 
 
 ## Reconcile
 
-`reconcileSvm` reads every `charged_full` Solana booking for the mandate. When the chain can read a genesis hash, the pass refuses a hash that does not match the candidate networks, before any write. It settles a matching finalized transfer, releases a failed one, releases a signature that another reservation already booked, leaves bookings with only a passed wall-clock deadline in place, and leaves pending, incomplete or unreadable bookings in place. The settle uses the same atomic signature claim as the live path, so a live settle and a reconcile pass cannot book one transfer twice. One throwing chain read reports an error for that booking only. The signed ledger is audited before any write.
+`reconcileSvm` reads every `charged_full` Solana booking for the mandate. When the chain can read a genesis hash, the pass refuses a hash that does not match the candidate networks, before any write. It settles a matching finalized transfer, retains a reported failed transaction or a signature mentioned by another booking, leaves bookings with only a passed wall-clock deadline in place, and leaves pending, incomplete or unreadable bookings in place. The settle uses the same atomic signature claim as the live path. A losing claim retains its booking; it does not release a potentially distinct authorization. One throwing chain read reports an error for that booking only. The signed ledger is audited before any write.
 
 ## Operator release
 
@@ -142,3 +142,7 @@ The demo ledger goes to `~/.tapvow/svm-demo/<pid>/rail.db`. Set `SVM_DEMO_DIR` t
 - One database can hold more than one mandate. Set `store_id` in the mandate to bind it to one database.
 - The signature claim is per mandate. The unique key is `(mandate_id, tx_signature)`. A transfer that settles under one mandate is not detected under a different mandate in the same database. Use one database per mandate, or accept this boundary.
 - The facilitator is trusted to submit. The rail checks the result on chain.
+
+## Conservative accounting limit
+
+Transaction verification matches payment facts but does not bind the returned ID to the exact decoded payer signature. After a signed request may have left the gateway, neither a local deadline, a historical signature mention, an atomic duplicate claim nor an unbound failed transaction ID automatically frees its budget. Such bookings remain `charged_full` until explicit audited operator review. This can over-hold the budget for genuinely failed or duplicate payments. It is a deliberate safe default, not proof that all retained amounts were spent. Exact authorization binding is future work.
