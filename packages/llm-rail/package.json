@@ -1,0 +1,19 @@
+{
+  "name": "@mandate/llm-rail",
+  "version": "0.1.0",
+  "description": "OpenAI- and Anthropic-compatible LLM gateway with per-agent virtual keys and atomic budget reservations.",
+  "author": "Michael Lip (https://github.com/theluckystrike)",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --no-warnings --import tsx --test --test-timeout=120000 test/*.test.ts"
+  },
+  "dependencies": {
+    "@mandate/core": "0.1.0",
+    "@mandate/passkey": "0.1.0"
+  }
+}

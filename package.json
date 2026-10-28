@@ -1,0 +1,24 @@
+{
+  "name": "tapvow-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TapVow, signed spend mandates, an atomic budget gateway and a tamper-evident ledger for AI agents.",
+  "author": "Michael Lip (https://github.com/theluckystrike)",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "5.6.3"
+  }
+}

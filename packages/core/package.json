@@ -1,0 +1,11 @@
+{
+  "name": "@mandate/core",
+  "version": "0.1.0",
+  "description": "Mandate schema, canonical JSON and the signed SQLite hash-chain ledger.",
+  "author": "Michael Lip (https://github.com/theluckystrike)",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "node --no-warnings --import tsx --test --test-timeout=600000 test/*.test.ts" }
+}

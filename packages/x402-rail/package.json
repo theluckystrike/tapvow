@@ -1,0 +1,31 @@
+{
+  "name": "@mandate/x402-rail",
+  "version": "0.1.0",
+  "description": "x402 payment rail behind the TapVow gateway, on the same signed mandate and ledger.",
+  "author": "Michael Lip (https://github.com/theluckystrike)",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pinned-fetch": "./src/pinned-fetch.ts",
+    "./private-address": "./src/private-address.ts"
+  },
+  "scripts": {
+    "test": "node --no-warnings --import tsx --test --test-timeout=120000 test/*.test.ts",
+    "fork-e2e": "node --no-warnings --import tsx scripts/fork-e2e.ts",
+    "testnet": "node --no-warnings --import tsx scripts/testnet.ts",
+    "mainnet": "node --no-warnings --import tsx scripts/mainnet.ts",
+    "reconcile-testnet": "node --no-warnings --import tsx scripts/reconcile-testnet.ts"
+  },
+  "dependencies": {
+    "@mandate/core": "0.1.0",
+    "@mandate/llm-rail": "0.1.0",
+    "@mandate/payee-guard": "0.1.0",
+    "@mandate/approval": "0.1.0",
+    "@x402/core": "2.28.0",
+    "@x402/evm": "2.28.0",
+    "@x402/fetch": "2.28.0",
+    "viem": "2.57.2"
+  }
+}

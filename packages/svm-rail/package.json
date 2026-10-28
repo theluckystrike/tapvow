@@ -1,0 +1,33 @@
+{
+  "name": "@mandate/svm-rail",
+  "version": "0.1.0",
+  "description": "Solana x402 payment rail behind the TapVow gateway, on the same signed mandate and ledger.",
+  "author": "Michael Lip (https://github.com/theluckystrike)",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "devnet-demo": "node --no-warnings --import tsx scripts/svm-devnet-demo.ts",
+    "operator-release": "node --no-warnings --import tsx scripts/svm-operator-release.ts"
+  },
+  "dependencies": {
+    "@mandate/core": "0.1.0",
+    "@mandate/llm-rail": "0.1.0",
+    "@mandate/payee-guard": "0.1.0",
+    "@solana/kit": "^5.1.0",
+    "@x402/core": "2.28.0",
+    "@x402/fetch": "2.28.0",
+    "@x402/svm": "2.28.0",
+    "@mandate/x402-rail": "0.1.0",
+    "@solana-program/token": "^0.9.0",
+    "@solana-program/token-2022": "^0.6.1"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}
