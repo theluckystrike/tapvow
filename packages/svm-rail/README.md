@@ -122,7 +122,7 @@ SVM_RPC_URL=https://api.devnet.solana.com \
 npm run devnet-demo --workspace @mandate/svm-rail
 ```
 
-Pin `SVM_RPC_URL` to `https://api.devnet.solana.com`, supply all three existing actor key files, and set `SVM_DEMO_DIR` to a new task-local folder. Omitting actor files generates keys. The demo can submit setup transactions before the rail starts its network check.
+Pin `SVM_RPC_URL` to `https://api.devnet.solana.com`, supply all three existing actor key files, and set `SVM_DEMO_DIR` to a new task-local folder. Omitting actor files generates keys. The demo verifies the actual RPC genesis against Solana devnet before resolving actors or making any balance, setup or send call. A wrong, unknown or unreadable genesis stops the demo with no actor creation.
 
 The payer must hold devnet SOL and canonical Circle devnet USDC. The payer SOL creates the payee token account and tops up the fee payer when needed. If a balance is too low the script prints `OWNER-NEEDED` with the exact faucet steps and stops. It never requests a faucet itself.
 

@@ -12,9 +12,13 @@ Built by Michael Lip, github.com/theluckystrike, with AI coding assistance. Copy
 
 ## Verification status, 28 Oct 2026
 
-No install, build, test or demo was run while this snapshot was prepared. Disk space was below the sprint floor of 20 GB and the brief allowed no build or test.
+The initial clean snapshot was prepared without installs or tests while disk space was below the task floor. After disk recovery, a fresh isolated clone of expiry-retention commit `892da04bfe2e4a1ef6b9fc009eab60eeff209054` passed dependency installation, 80 SVM tests, 22 focused shared-store tests, 66 payee tests, the pinned TypeScript 5.6.3 typecheck and CLI build. Four new domain regressions failed against the original `9b9d04c` runtime before passing on the fix.
 
-The development branch has a saved report of 79 `svm-rail` tests passing and a pinned-compiler typecheck. That report is not a current install proof. A future check must run `npm ci`, the workspace build, targeted rail and shared-store tests, typecheck and one isolated fake-upstream call with `--home` under a scratch folder.
+The source-build smoke used Node 22.23.4, an isolated TapVow home and a fake upstream. A governed call returned HTTP 200, and exported receipts passed pinned-key verification. No real provider or Solana call was made. The harness failed only while compiling its final summary because a Node reporter used a new output prefix. Counts were recovered from saved test logs without repeating the passed checks.
+
+A separate commit, `48553efeb3c13affa2f2555f1ca8935ac0c67cdb`, adds the demo genesis guard. Its four mocked preflight tests and SVM package typecheck passed. The base dependency installation and 168 checks were not repeated, since this guard changes no dependency, CLI or shared money logic. This documentation update changes no runtime source.
+
+These are local and mocked checks. Saved evidence does not establish a live Solana settlement. A genuine devnet payment still needs funded test wallets, canonical devnet USDC and an end-to-end verification and resource-delivery run.
 
 ## What a reader should not conclude
 
@@ -25,3 +29,7 @@ The development branch has a saved report of 79 `svm-rail` tests passing and a p
 ## Conservative settlement maintenance
 
 This experimental candidate adds a small maintenance patch after the source snapshot. Reconcile no longer releases an unknown signed payment from a wall-clock deadline alone. Its exact signed blockhash expiry is not proven, so the booking stays charged in full until chain evidence or an explicit audited operator release. The code diff and regressions are visible in this branch's commit. The original clean snapshot remains separate for comparison.
+
+## Demo setup safety
+
+The demo reads the RPC genesis before resolving payee and fee-payer actors. Only the official Solana devnet genesis permits the next stage. Read errors and unknown networks fail closed without exposing RPC authentication details. Keep the three test key files explicit, outside the repository, and use a separate demo directory. The guard was tested with mocks only; the real demo was not invoked.
