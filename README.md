@@ -4,6 +4,8 @@ TapVow puts one signed spending limit in front of every AI agent you run, enforc
 
 ## Quick start
 
+For a local demo without an install or build, download the [portable judge kit](https://github.com/theluckystrike/tapvow/releases/tag/nebius-judge-20261030), verify its published checksum, extract it, and run `bash judge.sh` then `bash check-acceptance.sh`. It requires Bash and Node 22.13 or newer. It uses a local fake provider and simulated accounting, with no model call or spend. The kit contains an older compiled gateway whose budget cards need a reload; the dashboard source in this repository includes the later refresh repair.
+
 The npm package is not published yet. Build the source with Node 22.13 or newer. These commands start a demo with no provider key and no paid call.
 
 ```sh

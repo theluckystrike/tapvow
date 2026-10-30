@@ -98,6 +98,20 @@ tr:last-child td { border-bottom: none; }
   document.getElementById("json").href = "/api/export" + qs;
   document.getElementById("pdf").href = "/api/export.pdf" + qs;
 
+  var rowsBySeq = Object.create(null);
+  var headSeq = -1;
+  var headHash = "";
+  var connected = false;
+  var everOpened = false;
+  var stateStatus = "connecting";
+  var ledgerSeq = -1;
+  var budgetSeq = -1;
+  var requestSeq = 0;
+  var inFlight = false;
+  var queued = false;
+  var refreshTimer = null;
+  var STATE_TIMEOUT_MS = 8000;
+
   function usd(micros) {
     if (typeof micros !== "number") return "-";
     return "$" + (micros / 1000000).toFixed(6);
@@ -128,42 +142,172 @@ tr:last-child td { border-bottom: none; }
     tr.appendChild(cell(short(e.hash)));
     return tr;
   }
-  function prepend(e) {
-    var tbody = document.getElementById("rows");
-    tbody.insertBefore(rowElement(e), tbody.firstChild);
-    document.getElementById("empty").style.display = "none";
+  function isNumber(value) {
+    return typeof value === "number" && isFinite(value);
   }
-  function markLive(on) {
+  function cardsFresh() {
+    return stateStatus === "fresh" && budgetSeq >= 0 && budgetSeq >= ledgerSeq;
+  }
+  function renderStatus() {
+    var on = connected && cardsFresh();
     document.getElementById("dot").className = "dot" + (on ? " live" : "");
-    document.getElementById("status").textContent = on ? "live" : "offline";
+    var text = "connecting";
+    if (!connected) text = "offline";
+    else if (cardsFresh()) text = "live";
+    else if (stateStatus === "stale") text = "stale";
+    document.getElementById("status").textContent = text;
   }
-
-  fetch("/api/state" + qs, { headers: { accept: "application/json" } })
-    .then(function (r) { return r.json(); })
-    .then(function (s) {
+  function mergeHead(seq, hash) {
+    if (!isNumber(seq)) return;
+    if (seq > headSeq) {
+      headSeq = seq;
+      headHash = typeof hash === "string" ? hash : "";
+      setText("head", seq + " " + short(headHash));
+    } else if (seq === headSeq && !headHash && typeof hash === "string") {
+      headHash = hash;
+      setText("head", seq + " " + short(headHash));
+    }
+  }
+  // The ledger head can be known from SSE before the budget snapshot matches
+  // it. Rows/head may advance independently, but the money cards are only
+  // fresh while the snapshot version covers the newest known ledger version.
+  function noteLedger(seq, hash) {
+    if (!isNumber(seq) || seq < 0) return false;
+    var advanced = seq > ledgerSeq;
+    if (advanced) ledgerSeq = seq;
+    mergeHead(seq, hash);
+    if (budgetSeq < ledgerSeq) stateStatus = "stale";
+    if (advanced) renderStatus();
+    return advanced;
+  }
+  function validState(s) {
+    if (!s || typeof s !== "object") return false;
+    if (!s.head || typeof s.head !== "object") return false;
+    if (!isNumber(s.head.seq) || s.head.seq < 0) return false;
+    if (typeof s.head.hash !== "string") return false;
+    if (!isNumber(s.spent_micros)) return false;
+    if (!(s.budget_micros === null || isNumber(s.budget_micros))) return false;
+    if (!(s.remaining_micros === null || isNumber(s.remaining_micros))) return false;
+    if (!Array.isArray(s.entries)) return false;
+    return true;
+  }
+  function renderRows() {
+    var tbody = document.getElementById("rows");
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    var seqs = [];
+    for (var key in rowsBySeq) seqs.push(Number(key));
+    seqs.sort(function (a, b) { return b - a; });
+    for (var i = 0; i < seqs.length; i++) tbody.appendChild(rowsBySeq[seqs[i]]);
+    document.getElementById("empty").style.display = seqs.length ? "none" : "block";
+  }
+  function applyState(s) {
+    if (!validState(s)) {
+      stateStatus = "stale";
+      renderStatus();
+      return;
+    }
+    noteLedger(s.head.seq, s.head.hash);
+    var entries = s.entries;
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (!entry || !isNumber(entry.seq)) continue;
+      if (!rowsBySeq[entry.seq]) rowsBySeq[entry.seq] = rowElement(entry);
+    }
+    renderRows();
+    if (s.head.seq >= ledgerSeq) {
       setText("mandate", s.mandate && s.mandate.id);
       setText("budget", usd(s.budget_micros));
       setText("spent", usd(s.spent_micros));
       setText("remaining", usd(s.remaining_micros));
-      setText("head", s.head ? (s.head.seq + " " + short(s.head.hash)) : "-");
-      var tbody = document.getElementById("rows");
-      while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
-      for (var i = 0; i < s.entries.length; i++) tbody.appendChild(rowElement(s.entries[i]));
-      document.getElementById("empty").style.display = s.entries.length ? "none" : "block";
-    })
-    .catch(function () { markLive(false); });
+      budgetSeq = s.head.seq;
+      stateStatus = "fresh";
+    } else {
+      stateStatus = "stale";
+    }
+    renderStatus();
+  }
+  function startRefresh() {
+    if (inFlight) { queued = true; return; }
+    if (refreshTimer !== null) { clearTimeout(refreshTimer); refreshTimer = null; }
+    inFlight = true;
+    var id = ++requestSeq;
+    var settled = false;
+    var timer = null;
+    var controller = typeof AbortController === "function" ? new AbortController() : null;
+    function finish() {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      if (id !== requestSeq) return;
+      inFlight = false;
+      renderStatus();
+      if (queued) { queued = false; startRefresh(); }
+    }
+    timer = setTimeout(function () {
+      if (settled || id !== requestSeq) return;
+      if (controller) { try { controller.abort(); } catch (err) { /* ignore */ } }
+      stateStatus = "stale";
+      finish();
+    }, STATE_TIMEOUT_MS);
+    var opts = { headers: { accept: "application/json" } };
+    if (controller) opts.signal = controller.signal;
+    fetch("/api/state" + qs, opts)
+      .then(function (r) {
+        if (settled || id !== requestSeq) throw new Error("expired state read");
+        if (!r || r.ok === false) throw new Error("state read failed");
+        return r.json();
+      })
+      .then(function (s) {
+        if (settled || id !== requestSeq) return;
+        applyState(s);
+      })
+      .catch(function () {
+        if (settled || id !== requestSeq) return;
+        stateStatus = "stale";
+      })
+      .then(function () { finish(); });
+  }
+  function scheduleRefresh() {
+    if (refreshTimer !== null) return;
+    refreshTimer = setTimeout(function () {
+      refreshTimer = null;
+      startRefresh();
+    }, 250);
+  }
+
+  startRefresh();
 
   var source = new EventSource("/api/events" + qs);
-  source.addEventListener("open", function () { markLive(true); });
-  source.addEventListener("error", function () { markLive(false); });
+  source.addEventListener("open", function () {
+    var reconnected = everOpened;
+    everOpened = true;
+    connected = true;
+    // A reconnect must not present pre-disconnect cards as fresh: require a
+    // state read at least as new as the reconnected ledger before "live".
+    if (reconnected) stateStatus = "stale";
+    renderStatus();
+    if (reconnected) scheduleRefresh();
+  });
+  source.addEventListener("error", function () {
+    connected = false;
+    stateStatus = "stale";
+    renderStatus();
+  });
   source.addEventListener("hello", function (ev) {
     try {
       var s = JSON.parse(ev.data);
-      setText("head", s.seq + " " + short(s.hash));
+      if (!s || !isNumber(s.seq)) return;
+      if (noteLedger(s.seq, s.hash)) scheduleRefresh();
     } catch (err) { /* ignore */ }
   });
   source.addEventListener("entry", function (ev) {
-    try { prepend(JSON.parse(ev.data)); } catch (err) { /* ignore */ }
+    try {
+      var entry = JSON.parse(ev.data);
+      if (!entry || !isNumber(entry.seq)) return;
+      rowsBySeq[entry.seq] = rowElement(entry);
+      renderRows();
+      if (noteLedger(entry.seq, entry.hash)) scheduleRefresh();
+    } catch (err) { /* ignore */ }
   });
 })();
 </script>
