@@ -18,4 +18,5 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: node --test examples/nebius-demo/agent.acceptance.test.mjs
       - run: examples/nebius-demo/run.sh --fake
