@@ -161,22 +161,25 @@ function snapshot(opts: SnapshotOpts): Record<string, unknown> {
   };
 }
 
+const ELEMENT_IDS = ["json", "pdf", "dot", "status", "mandate", "budget", "spent", "remaining", "head", "rows", "empty"] as const;
+type ElementId = (typeof ELEMENT_IDS)[number];
+type Elements = Record<ElementId, El>;
+
 interface Harness {
-  els: Record<string, El>;
+  els: Elements;
   calls: Deferred[];
+  request: (index: number) => Deferred;
   clock: Clock;
   source: { emit: (type: string, payload?: unknown) => void };
   start: () => void;
 }
 
 function harness(): Harness {
-  const ids = ["json", "pdf", "dot", "status", "mandate", "budget", "spent", "remaining", "head", "rows", "empty"];
-  const els: Record<string, El> = {};
-  for (const id of ids) els[id] = new El(id);
-  for (const id of ["mandate", "budget", "spent", "remaining", "head"]) els[id].textContent = "-";
+  const els = Object.fromEntries(ELEMENT_IDS.map((id) => [id, new El(id)])) as Elements;
+  for (const id of ["mandate", "budget", "spent", "remaining", "head"] as const) els[id].textContent = "-";
 
   const document = {
-    getElementById: (id: string) => els[id] ?? null,
+    getElementById: (id: string) => (els as Partial<Record<string, El>>)[id] ?? null,
     createElement: () => new El("cell"),
   };
 
@@ -221,10 +224,16 @@ function harness(): Harness {
   const match = DASHBOARD_HTML.match(/<script>\n([\s\S]*?)<\/script>/);
   assert.ok(match, "embedded dashboard script is present");
   const script = match[1];
+  assert.ok(script, "embedded dashboard script has content");
 
   return {
     els,
     calls,
+    request(index: number): Deferred {
+      const request = calls[index];
+      assert.ok(request, `expected request at index ${index}`);
+      return request;
+    },
     clock,
     source: {
       emit(type: string, payload?: unknown) {
@@ -247,8 +256,12 @@ function failed(status = 503): { ok: boolean; status: number; json: () => Promis
   return { ok: false, status, json: async () => ({ error: "unavailable" }) };
 }
 
-function rowSeqs(els: Record<string, El>): number[] {
-  return els.rows.children.map((tr) => Number(tr.children[0].textContent));
+function rowSeqs(els: Elements): number[] {
+  return els.rows.children.map((tr) => {
+    const seqCell = tr.children[0];
+    assert.ok(seqCell, "ledger row has a sequence cell");
+    return Number(seqCell.textContent);
+  });
 }
 
 async function flush(): Promise<void> {
@@ -265,7 +278,7 @@ async function boot(h: Harness, opts: SnapshotOpts = { headSeq: 8, spent: 8000 }
   h.start();
   h.source.emit("open");
   assert.equal(h.calls.length, 1, "one initial state read");
-  h.calls[0].resolve(ok(snapshot(opts)));
+  h.request(0).resolve(ok(snapshot(opts)));
   await flush();
   assert.equal(h.els.status.textContent, "live");
 }
@@ -274,14 +287,14 @@ test("dashboard live: cards update after a streamed entry once a matching snapsh
   const h = harness();
   h.start();
   assert.equal(h.calls.length, 1, "one initial state read");
-  assert.match(h.calls[0].url, /^\/api\/state\?token=fake-token$/);
+  assert.match(h.request(0).url, /^\/api\/state\?token=fake-token$/);
 
   h.source.emit("open");
   h.source.emit("entry", row(9, "llm.settle", 1000));
   assert.equal(h.els.head.textContent, "9 ledger-00009", "entry advances the head immediately");
   assert.equal(h.els.status.textContent, "stale", "a newer ledger makes older cards stale immediately");
 
-  h.calls[0].resolve(ok(snapshot({ headSeq: 8, spent: 10973, entries: [row(8)] })));
+  h.request(0).resolve(ok(snapshot({ headSeq: 8, spent: 10973, entries: [row(8)] })));
   await flush();
   assert.equal(h.els.status.textContent, "stale", "a snapshot behind the known ledger is not accepted");
   assert.equal(h.els.spent.textContent, "-", "no stale snapshot values are shown as fresh");
@@ -289,7 +302,7 @@ test("dashboard live: cards update after a streamed entry once a matching snapsh
 
   await tick(h, 250);
   assert.equal(h.calls.length, 2, "one bounded state read after the entry, not a poll loop");
-  h.calls[1].resolve(ok(snapshot({ headSeq: 9, spent: 11973, entries: [row(9), row(8)] })));
+  h.request(1).resolve(ok(snapshot({ headSeq: 9, spent: 11973, entries: [row(9), row(8)] })));
   await flush();
 
   assert.equal(h.els.spent.textContent, "$0.011973", "Spent card is live without a reload");
@@ -306,7 +319,7 @@ test("dashboard live: a late initial snapshot cannot drop rows or regress the he
   h.source.emit("entry", row(10));
   h.source.emit("entry", row(9));
 
-  h.calls[0].resolve(ok(snapshot({ headSeq: 8, spent: 8000, entries: [row(8), row(7)] })));
+  h.request(0).resolve(ok(snapshot({ headSeq: 8, spent: 8000, entries: [row(8), row(7)] })));
   await flush();
 
   assert.deepEqual(rowSeqs(h.els), [10, 9, 8, 7], "late snapshot merges instead of clearing newer rows");
@@ -316,7 +329,7 @@ test("dashboard live: a late initial snapshot cannot drop rows or regress the he
 
   await tick(h, 250);
   assert.equal(h.calls.length, 2);
-  h.calls[1].resolve(ok(snapshot({ headSeq: 10, spent: 10000, entries: [row(10), row(9)] })));
+  h.request(1).resolve(ok(snapshot({ headSeq: 10, spent: 10000, entries: [row(10), row(9)] })));
   await flush();
 
   assert.deepEqual(rowSeqs(h.els), [10, 9, 8, 7], "refresh neither duplicates nor silently drops older rows");
@@ -332,7 +345,7 @@ test("dashboard live: a failed refresh is shown stale and keeps the last honest 
   h.source.emit("entry", row(9));
   await tick(h, 250);
   assert.equal(h.calls.length, 2, "refresh attempted exactly once");
-  h.calls[1].resolve(failed(503));
+  h.request(1).resolve(failed(503));
   await flush();
 
   assert.equal(h.els.status.textContent, "stale", "failed state read is labelled stale, not live");
@@ -351,11 +364,11 @@ test("dashboard live: entries during an in-flight read coalesce into one follow-
   await tick(h, 250);
   assert.equal(h.calls.length, 1, "no overlapping request while the first read is pending");
 
-  h.calls[0].resolve(ok(snapshot({ headSeq: 8, spent: 9000, entries: [row(8)] })));
+  h.request(0).resolve(ok(snapshot({ headSeq: 8, spent: 9000, entries: [row(8)] })));
   await flush();
   assert.equal(h.calls.length, 2, "a single follow-up read runs after the pending one settles");
 
-  h.calls[1].resolve(ok(snapshot({ headSeq: 10, spent: 11000, entries: [row(10), row(9), row(8)] })));
+  h.request(1).resolve(ok(snapshot({ headSeq: 10, spent: 11000, entries: [row(10), row(9), row(8)] })));
   await flush();
   assert.equal(h.els.spent.textContent, "$0.011000");
   assert.deepEqual(rowSeqs(h.els), [10, 9, 8]);
@@ -375,19 +388,19 @@ test("dashboard live: a never-settling fetch times out, releases, and recovers o
   for (let seq = 10; seq <= 50; seq++) h.source.emit("entry", row(seq));
   await tick(h, 8000);
 
-  assert.equal(h.calls[1].aborted, true, "the hung request is aborted at the deadline");
+  assert.equal(h.request(1).aborted, true, "the hung request is aborted at the deadline");
   assert.equal(h.calls.length, 3, "the queued follow-up is released exactly once, no storm");
   assert.equal(h.els.status.textContent, "stale", "hung cards are not labelled live");
   assert.equal(h.els.spent.textContent, "$0.008000", "last honest value is preserved");
   assert.equal(h.els.head.textContent, "50 ledger-00050", "head still advances independently");
 
   // A real late reply after the timeout must not overwrite newer state.
-  h.calls[1].resolve(ok(snapshot({ headSeq: 9, spent: 9000 })));
+  h.request(1).resolve(ok(snapshot({ headSeq: 9, spent: 9000 })));
   await flush();
   assert.equal(h.els.spent.textContent, "$0.008000", "late success from an expired request is discarded");
   assert.equal(h.els.status.textContent, "stale");
 
-  h.calls[2].resolve(ok(snapshot({ headSeq: 50, spent: 50000, remaining: 0 })));
+  h.request(2).resolve(ok(snapshot({ headSeq: 50, spent: 50000, remaining: 0 })));
   await flush();
   assert.equal(h.els.spent.textContent, "$0.050000");
   assert.equal(h.els.status.textContent, "live");
@@ -409,12 +422,12 @@ test("dashboard live: a hung response body is covered by the same timeout", asyn
   const body = new Promise<unknown>((resolve) => {
     resolveBody = resolve;
   });
-  h.calls[1].resolve({ ok: true, status: 200, json: () => body });
+  h.request(1).resolve({ ok: true, status: 200, json: () => body });
   await flush();
   assert.equal(h.els.status.textContent, "stale");
 
   await tick(h, 8000);
-  assert.equal(h.calls[1].aborted, true, "timeout spans the body read");
+  assert.equal(h.request(1).aborted, true, "timeout spans the body read");
   assert.equal(h.els.status.textContent, "stale");
   assert.equal(h.els.spent.textContent, "$0.008000");
 
@@ -426,7 +439,7 @@ test("dashboard live: a hung response body is covered by the same timeout", asyn
   h.source.emit("entry", row(10));
   await tick(h, 250);
   assert.equal(h.calls.length, 3, "a new event after the timeout starts a fresh read");
-  h.calls[2].resolve(ok(snapshot({ headSeq: 10, spent: 10000 })));
+  h.request(2).resolve(ok(snapshot({ headSeq: 10, spent: 10000 })));
   await flush();
   assert.equal(h.els.spent.textContent, "$0.010000");
   assert.equal(h.els.status.textContent, "live");
@@ -439,7 +452,7 @@ test("dashboard live: malformed snapshot {} is stale and keeps the last good car
   h.source.emit("entry", row(9));
   await tick(h, 250);
   assert.equal(h.calls.length, 2);
-  h.calls[1].resolve(ok({}));
+  h.request(1).resolve(ok({}));
   await flush();
 
   assert.equal(h.els.status.textContent, "stale", "empty object is not a valid snapshot");
@@ -455,14 +468,14 @@ test("dashboard live: invalid numeric fields and regressed heads are rejected", 
 
   h.source.emit("entry", row(9));
   await tick(h, 250);
-  h.calls[1].resolve(ok({ ...snapshot({ headSeq: 9, spent: 9000 }), spent_micros: Number.NaN }));
+  h.request(1).resolve(ok({ ...snapshot({ headSeq: 9, spent: 9000 }), spent_micros: Number.NaN }));
   await flush();
   assert.equal(h.els.status.textContent, "stale", "non-finite spent is rejected");
   assert.equal(h.els.spent.textContent, "$0.008000");
 
   h.source.emit("entry", row(10));
   await tick(h, 250);
-  h.calls[2].resolve(ok(snapshot({ headSeq: 7, spent: 7000 })));
+  h.request(2).resolve(ok(snapshot({ headSeq: 7, spent: 7000 })));
   await flush();
   assert.equal(h.els.status.textContent, "stale", "a snapshot head behind the ledger is rejected");
   assert.equal(h.els.spent.textContent, "$0.008000", "regressed snapshot does not rewrite cards");
@@ -470,7 +483,7 @@ test("dashboard live: invalid numeric fields and regressed heads are rejected", 
 
   h.source.emit("entry", row(11));
   await tick(h, 250);
-  h.calls[3].resolve(ok(snapshot({ headSeq: 11, spent: 11000 })));
+  h.request(3).resolve(ok(snapshot({ headSeq: 11, spent: 11000 })));
   await flush();
   assert.equal(h.els.status.textContent, "live");
   assert.equal(h.els.spent.textContent, "$0.011000");
@@ -480,7 +493,7 @@ test("dashboard live: an empty initial ledger is valid and shows zero spend", as
   const h = harness();
   h.start();
   h.source.emit("open");
-  h.calls[0].resolve(ok(snapshot({ headSeq: 0, spent: 0, budget: 50000, remaining: 50000, entries: [] })));
+  h.request(0).resolve(ok(snapshot({ headSeq: 0, spent: 0, budget: 50000, remaining: 50000, entries: [] })));
   await flush();
 
   assert.equal(h.els.status.textContent, "live");
@@ -510,7 +523,7 @@ test("dashboard live: reconnect does not label old cards live before a matching 
   assert.equal(h.calls.length, 2, "reconnect triggers one state read");
   assert.equal(h.els.status.textContent, "stale", "still stale while the matching read is pending");
 
-  h.calls[1].resolve(ok(snapshot({ headSeq: 10, spent: 10000 })));
+  h.request(1).resolve(ok(snapshot({ headSeq: 10, spent: 10000 })));
   await flush();
   assert.equal(h.els.status.textContent, "live", "matching state read restores live");
   assert.equal(h.els.spent.textContent, "$0.010000");
@@ -527,7 +540,7 @@ test("dashboard live: matching hello after a reconnect still requires a state re
 
   await tick(h, 250);
   assert.equal(h.calls.length, 2);
-  h.calls[1].resolve(ok(snapshot({ headSeq: 8, spent: 8000 })));
+  h.request(1).resolve(ok(snapshot({ headSeq: 8, spent: 8000 })));
   await flush();
   assert.equal(h.els.status.textContent, "live");
   assert.equal(h.els.spent.textContent, "$0.008000");
@@ -543,16 +556,16 @@ test("dashboard live: HTTP, malformed JSON and network failures all mark stale a
     await tick(h, 250);
     assert.equal(h.calls.length, 2, `${kind}: refresh requested`);
 
-    if (kind === "http") h.calls[1].resolve(failed(503));
+    if (kind === "http") h.request(1).resolve(failed(503));
     else if (kind === "json") {
-      h.calls[1].resolve({
+      h.request(1).resolve({
         ok: true,
         status: 200,
         json: async () => {
           throw new SyntaxError("invalid JSON");
         },
       });
-    } else h.calls[1].reject(new TypeError("network unavailable"));
+    } else h.request(1).reject(new TypeError("network unavailable"));
     await flush();
 
     assert.equal(h.els.status.textContent, "stale", `${kind}: failure is stale`);
@@ -565,7 +578,7 @@ test("dashboard live: HTTP, malformed JSON and network failures all mark stale a
     await tick(h, 250);
 
     assert.equal(h.calls.length, 3, `${kind}: one recovery read`);
-    h.calls[2].resolve(ok(snapshot({ headSeq: 9, spent: 9000 })));
+    h.request(2).resolve(ok(snapshot({ headSeq: 9, spent: 9000 })));
     await flush();
     assert.equal(h.els.status.textContent, "live", `${kind}: recovery restores live`);
     assert.equal(h.els.spent.textContent, "$0.009000", `${kind}: recovered value`);
@@ -581,11 +594,11 @@ test("dashboard live: a burst is bounded and idle time does not poll", async () 
   await tick(h, 250);
   assert.equal(h.calls.length, 1, "one in-flight request while the burst arrives");
 
-  h.calls[0].resolve(ok(snapshot({ headSeq: 0, spent: 0, entries: [] })));
+  h.request(0).resolve(ok(snapshot({ headSeq: 0, spent: 0, entries: [] })));
   await flush();
   assert.equal(h.calls.length, 2, "exactly one coalesced follow-up");
 
-  h.calls[1].resolve(ok(snapshot({ headSeq: 100, spent: 100000, budget: 200000 })));
+  h.request(1).resolve(ok(snapshot({ headSeq: 100, spent: 100000, budget: 200000 })));
   await flush();
   assert.equal(h.els.status.textContent, "live");
   assert.equal(h.els.head.textContent, "100 ledger-00100");
