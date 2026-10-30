@@ -124,7 +124,7 @@ AGENT_EXIT=$?
 set -e
 
 if [[ -s "$RUN/code/passing/duration.mjs" ]]; then
-  say "What the agent built (its last version whose own tests pass)"
+  say "What the agent built (last version that passed generated and fixed checks)"
   sed -n '1,24p' "$RUN/code/passing/duration.mjs"
   (cd "$RUN/code/passing" && node --test duration.test.mjs 2>&1 | grep -E '^# (tests|pass|fail)') || true
 fi

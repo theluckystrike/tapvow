@@ -19,6 +19,7 @@ import http from "node:http";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { extractFiles } from "./extract.mjs";
 
 const BASE = process.env.OPENAI_BASE_URL ?? "";
@@ -30,6 +31,7 @@ const MAX_CALLS = Number(process.env.DEMO_MAX_CALLS ?? 40);
 const PAUSE_MS = Number(process.env.DEMO_CALL_PAUSE_MS ?? 0);
 const REASONING = (process.env.DEMO_REASONING ?? "off") === "on";
 const FILES = ["duration.mjs", "duration.test.mjs"];
+const ACCEPTANCE = fileURLToPath(new URL("./acceptance.mjs", import.meta.url));
 
 const color = process.stdout.isTTY || process.env.FORCE_COLOR ? (c, s) => `\x1b[${c}m${s}\x1b[0m` : (_c, s) => s;
 const dim = (s) => color("2", s);
@@ -155,8 +157,8 @@ function complete(messages) {
   });
 }
 
-function runTests() {
-  const r = spawnSync(process.execPath, ["--test", "duration.test.mjs"], { cwd: WORK, encoding: "utf8", timeout: 30_000 });
+function runTests(file) {
+  const r = spawnSync(process.execPath, ["--test", file], { cwd: WORK, encoding: "utf8", timeout: 30_000 });
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   const pass = Number(out.match(/# pass (\d+)/)?.[1] ?? 0);
   const failed = Number(out.match(/# fail (\d+)/)?.[1] ?? 0);
@@ -164,11 +166,12 @@ function runTests() {
 }
 
 /** The short result shown on each call line. */
-function label(extracted, tests, finish) {
+function label(extracted, tests, acceptance, finish) {
   if (Object.keys(extracted.files).length === 0) {
     return red(finish === "length" || extracted.truncated ? "no code returned (cut at max_tokens)" : "no code returned");
   }
-  if (tests.ok) return green(`tests ${tests.pass} pass`);
+  if (tests.ok && acceptance.ok) return green(`tests ${tests.pass} pass, acceptance ${acceptance.pass} pass`);
+  if (tests.ok) return red(`generated tests ${tests.pass} pass; acceptance fails`);
   if (tests.pass + tests.failed === 0) return red("tests did not run");
   return red(`tests ${tests.failed} of ${tests.pass + tests.failed} fail`);
 }
@@ -185,6 +188,7 @@ let fixRounds = 0;
 let backlog = 0;
 let refused = null;
 let lastPassing = null;
+let stoppedReason = "call_limit";
 const log = [];
 console.log(bold(`agent: model ${MODEL} through ${BASE}`));
 console.log(dim(`task: ${TASK}`));
@@ -203,6 +207,7 @@ while (calls < MAX_CALLS) {
       // keep the raw body
     }
     refused = { status: r.status, reason, by_tapvow: byTapVow };
+    stoppedReason = "gateway_or_provider_refusal";
     console.log(
       red(byTapVow ? `\nHTTP ${r.status} from TapVow, the call never reached Nebius` : `\nHTTP ${r.status} from the provider, passed through by TapVow`),
     );
@@ -214,11 +219,17 @@ while (calls < MAX_CALLS) {
   const extracted = extractFiles(r.text, FILES);
   const names = Object.keys(extracted.files);
   for (const name of names) writeFileSync(join(WORK, name), extracted.files[name]);
-  const tests = names.length > 0 ? runTests() : { ok: false, pass: 0, failed: 0, out: "" };
-  if (tests.ok) {
+  const completeCandidate = FILES.every((name) => names.includes(name)) && !extracted.truncated;
+  const notRun = { ok: false, pass: 0, failed: 0, out: "Both complete files are required before tests can run." };
+  const tests = completeCandidate ? runTests("duration.test.mjs") : notRun;
+  // The model's own tests can omit a requirement. Run the fixed task contract
+  // from the source tree, outside the generated answer files, on every candidate.
+  const acceptance = completeCandidate ? runTests(ACCEPTANCE) : notRun;
+  const accepted = tests.ok && acceptance.ok;
+  if (accepted) {
     mkdirSync(join(WORK, "passing"), { recursive: true });
     for (const name of FILES) copyFileSync(join(WORK, name), join(WORK, "passing", name));
-    lastPassing = { call: calls, tests: tests.pass };
+    lastPassing = { call: calls, tests: tests.pass, acceptance: acceptance.pass };
   }
   const u = r.usage ?? {};
   const entry = {
@@ -229,6 +240,8 @@ while (calls < MAX_CALLS) {
     files: names,
     truncated: extracted.truncated,
     tests: { ok: tests.ok, pass: tests.pass, failed: tests.failed },
+    acceptance: { ok: acceptance.ok, pass: acceptance.pass, failed: acceptance.failed },
+    accepted,
     charged_micros: Number.isFinite(r.charged) ? r.charged : null,
   };
   log.push(entry);
@@ -237,18 +250,23 @@ while (calls < MAX_CALLS) {
   console.log(
     `call ${String(calls).padStart(2)}  ${String(u.prompt_tokens ?? "?").padStart(5)} in ${String(u.completion_tokens ?? "?").padStart(5)} out` +
       `  held ${usd(r.reserved)}  charged ${usd(r.charged)} USD  left ${usd(r.remaining)} USD  ` +
-      label(extracted, tests, r.finish),
+      label(extracted, tests, acceptance, r.finish),
   );
   messages.push({ role: "assistant", content: r.text });
   if (PAUSE_MS > 0) await new Promise((done) => setTimeout(done, PAUSE_MS));
-  if (!tests.ok && fixRounds < 2) {
+  if (!accepted) {
+    if (fixRounds >= 2) {
+      stoppedReason = "repair_limit";
+      console.log(red("agent: task contract still fails after two repair attempts; stopping without a new feature"));
+      break;
+    }
     fixRounds++;
     messages.push({
       role: "user",
       content:
-        names.length === 0
-          ? "I found no files in your reply. Answer again with both complete files in the layout from the system message."
-          : `The tests fail. Fix both files. Output of node --test:\n${tests.out.slice(-2500)}`,
+        !completeCandidate
+          ? "I did not receive both complete files. Answer again with both complete files in the layout from the system message."
+          : `The candidate failed the task checks. Fix both files. Generated test output:\n${tests.out.slice(-2000)}\nIndependent acceptance output:\n${acceptance.out.slice(-2500)}`,
     });
     continue;
   }
@@ -264,15 +282,15 @@ console.log(
 );
 console.log(
   lastPassing
-    ? green(`agent: last passing code from call ${lastPassing.call} (${lastPassing.tests} tests) kept in ${join(WORK, "passing")}`)
-    : red("agent: no call produced code whose tests pass"),
+    ? green(`agent: last passing code from call ${lastPassing.call} (${lastPassing.tests} generated tests, ${lastPassing.acceptance} acceptance tests) kept in ${join(WORK, "passing")}`)
+    : red("agent: no call produced code that passes both generated and acceptance tests"),
 );
 writeFileSync(
   join(WORK, "agent-summary.json"),
   JSON.stringify(
-    { model: MODEL, reasoning: REASONING ? "on" : "off", calls, charged_micros: charged, last_passing: lastPassing, refused, log },
+    { model: MODEL, reasoning: REASONING ? "on" : "off", calls, charged_micros: charged, last_passing: lastPassing, refused, stopped_reason: stoppedReason, log },
     null,
     2,
   ) + "\n",
 );
-process.exit(refused && refused.status === 402 ? 0 : 1);
+process.exit(refused && refused.status === 402 && lastPassing ? 0 : 1);
