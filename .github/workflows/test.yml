@@ -20,3 +20,16 @@ jobs:
       - run: npm test
       - run: node --test examples/nebius-demo/agent.acceptance.test.mjs
       - run: examples/nebius-demo/run.sh --fake
+      - id: judge-artifact
+        run: node scripts/capture-judge-artifact.mjs
+        env:
+          GITHUB_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          GITHUB_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: tapvow-judge-gateway-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.judge-artifact.outputs.dir }}
+          if-no-files-found: error
+          retention-days: 7
